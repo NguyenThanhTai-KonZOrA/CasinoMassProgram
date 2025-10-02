@@ -1,0 +1,27 @@
+@host = http://localhost:5256
+
+###
+# Upload Excel (multipart/form-data)
+POST {{host}}/imports/upload
+Content-Type: multipart/form-data; boundary=---------------------------BOUNDARY
+Accept: application/json
+
+-----------------------------BOUNDARY
+Content-Disposition: form-data; name="file"; filename="CRPImport.xlsx"
+Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+
+< ./CRPImport.xlsx
+-----------------------------BOUNDARY--
+
+###
+# Get batch summary
+GET {{host}}/imports/{{lastBatchId}}
+Accept: application/json
+
+###
+# Download annotated Excel
+GET {{host}}/imports/{{lastBatchId}}/annotated
+
+###
+# Commit valid rows into Members
+POST {{host}}/imports/{{lastBatchId}}/commit
