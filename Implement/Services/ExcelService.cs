@@ -1,3 +1,4 @@
+using Azure.Core;
 using ClosedXML.Excel;
 using Implement.EntityModels;
 using Implement.Repositories.Interface;
@@ -404,11 +405,13 @@ public class ExcelService : IExcelService
             trmPairs.Add((rep.Id, member.Id));
 
             // Per-row settlement
+            var monthStartValue = new DateOnly(monthStart.Year, monthStart.Month, 1);
+
             var settlement = new AwardSettlement
             {
                 TeamRepresentative = rep,
                 Member = member,
-                MonthStart = monthStart,
+                MonthStart = monthStartValue,
                 SettlementDoc = Get("Settlement Doc"),
                 No = noValue,
                 JoinedDate = joinedDate,

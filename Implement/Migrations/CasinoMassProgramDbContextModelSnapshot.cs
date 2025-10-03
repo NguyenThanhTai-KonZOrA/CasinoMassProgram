@@ -193,6 +193,40 @@ namespace Implement.Migrations
                     b.ToTable("Members");
                 });
 
+            modelBuilder.Entity("Implement.EntityModels.PaymentTeamRepresentative", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("AwardTotal")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateOnly>("MonthStart")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<Guid>("TeamRepresentativeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TeamRepresentativeId", "MonthStart")
+                        .IsUnique();
+
+                    b.ToTable("PaymentTeamRepresentatives");
+                });
+
             modelBuilder.Entity("Implement.EntityModels.TeamRepresentative", b =>
                 {
                     b.Property<Guid>("Id")
@@ -281,6 +315,17 @@ namespace Implement.Migrations
                         .IsRequired();
 
                     b.Navigation("Batch");
+                });
+
+            modelBuilder.Entity("Implement.EntityModels.PaymentTeamRepresentative", b =>
+                {
+                    b.HasOne("Implement.EntityModels.TeamRepresentative", "TeamRepresentative")
+                        .WithMany()
+                        .HasForeignKey("TeamRepresentativeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("TeamRepresentative");
                 });
 
             modelBuilder.Entity("Implement.EntityModels.TeamRepresentativeMember", b =>

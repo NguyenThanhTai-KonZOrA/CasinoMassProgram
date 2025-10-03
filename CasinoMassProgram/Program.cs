@@ -12,7 +12,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddCors(opts =>
 {
     opts.AddPolicy("AllowSpa", p => p
-        .WithOrigins("http://localhost:5173", "http://localhost:5174", "http://localhost:3000")
+        .WithOrigins("http://localhost:5173", "http://localhost:5175", "http://localhost:3000")
         .AllowAnyHeader()
         .AllowAnyMethod());
 });

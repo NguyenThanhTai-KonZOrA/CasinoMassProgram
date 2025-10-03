@@ -118,6 +118,29 @@ namespace Implement.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "PaymentTeamRepresentatives",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    TeamRepresentativeId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    MonthStart = table.Column<DateOnly>(type: "date", nullable: false),
+                    AwardTotal = table.Column<decimal>(type: "decimal(18,2)", nullable: false),
+                    Status = table.Column<string>(type: "nvarchar(50)", maxLength: 50, nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime2", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PaymentTeamRepresentatives", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_PaymentTeamRepresentatives_TeamRepresentatives_TeamRepresentativeId",
+                        column: x => x.TeamRepresentativeId,
+                        principalTable: "TeamRepresentatives",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "TeamRepresentativeMembers",
                 columns: table => new
                 {
@@ -189,6 +212,12 @@ namespace Implement.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
+                name: "IX_PaymentTeamRepresentatives_TeamRepresentativeId_MonthStart",
+                table: "PaymentTeamRepresentatives",
+                columns: new[] { "TeamRepresentativeId", "MonthStart" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_TeamRepresentativeMembers_MemberId",
                 table: "TeamRepresentativeMembers",
                 column: "MemberId");
@@ -208,6 +237,9 @@ namespace Implement.Migrations
 
             migrationBuilder.DropTable(
                 name: "ImportCellErrors");
+
+            migrationBuilder.DropTable(
+                name: "PaymentTeamRepresentatives");
 
             migrationBuilder.DropTable(
                 name: "TeamRepresentativeMembers");

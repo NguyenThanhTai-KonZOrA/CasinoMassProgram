@@ -2,6 +2,7 @@
 {
     public class SettlementStatementResponse
     {
+        public Guid SettlementId { get; set; }  // unique per settlement
         public string MemberId { get; set; }
         public string MemberName { get; set; }
         public DateTime JoinedDate { get; set; }

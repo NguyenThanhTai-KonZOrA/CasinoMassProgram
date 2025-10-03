@@ -20,5 +20,20 @@ namespace CasinoMassProgram.Controllers
             var results = await _statementService.SettlementStatementSearch(settlementStatementRequest);
             return Ok(results);
         }
+
+        [HttpPost("list-teamRepresentatives")]
+        public async Task<IActionResult> GetTeamRepresentatives(TeamRepresentativesRequest request)
+        {
+            var response = await _statementService.GetTeamRepresentatives(request);
+            return Ok(response);
+        }
+
+        [HttpPost("payment")]
+        public async Task<IActionResult> PaymentTeamRepresentatives(PaymentTeamRepresentativesRequest paymentTeam)
+        {
+            var response = await _statementService.PaymentTeamRepresentatives(paymentTeam);
+            return Ok(response);
+        }
+
     }
 }

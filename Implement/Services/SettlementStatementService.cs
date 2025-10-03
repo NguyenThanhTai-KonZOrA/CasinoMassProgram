@@ -1,17 +1,23 @@
-﻿using Implement.Repositories.Interface;
+﻿using Implement.ApplicationDbContext;
+using Implement.EntityModels;
+using Implement.Repositories.Interface;
 using Implement.Services.Interface;
 using Implement.ViewModels.Request;
 using Implement.ViewModels.Response;
+using Microsoft.EntityFrameworkCore;
 
 namespace Implement.Services
 {
     public class SettlementStatementService : ISettlementStatementService
     {
         private readonly IAwardSettlementRepository _awardSettlementRepository;
+        private readonly CasinoMassProgramDbContext _dbContext;
 
-        public SettlementStatementService(IAwardSettlementRepository awardSettlementRepository)
+        public SettlementStatementService(IAwardSettlementRepository awardSettlementRepository,
+            CasinoMassProgramDbContext dbContext)
         {
             _awardSettlementRepository = awardSettlementRepository;
+            _dbContext = dbContext;
         }
 
         public async Task<List<SettlementStatementResponse>> SettlementStatementSearch(SettlementStatementRequest settlementStatementRequest)
@@ -28,37 +34,207 @@ namespace Implement.Services
                 if (end < start) (start, end) = (end, start);
             }
 
-            var trId = settlementStatementRequest.TeamRepresentativeId?.Trim();
-            var trName = settlementStatementRequest.TeamRepresentativeName?.Trim();
-            var program = settlementStatementRequest.ProgramName?.Trim();
-
-            // Query AwardSettlements with filters and include navigation props
-            var settlements = await _awardSettlementRepository.FindAsync(
-                s =>
-                    s.MonthStart >= start &&
-                    s.MonthStart <= end &&
-                    (string.IsNullOrWhiteSpace(trId) || (s.TeamRepresentative != null && s.TeamRepresentative.ExternalId == trId)) &&
-                    (string.IsNullOrWhiteSpace(trName) || (s.TeamRepresentative != null && (s.TeamRepresentative.Name ?? "").Contains(trName))) &&
-                    // Assuming ProgramName maps to TeamRepresentative.Segment (adjust if your model differs)
-                    (string.IsNullOrWhiteSpace(program) || (s.TeamRepresentative != null && (s.TeamRepresentative.Segment ?? "") == program)),
+            var settlements = await _awardSettlementRepository.FindAsync(x => x.JoinedDate >= start && x.LastGamingDate <= end,
                 s => s.Member!,
-                s => s.TeamRepresentative!
-            );
+                s => s.TeamRepresentative!);
+
+            if (!string.IsNullOrEmpty(settlementStatementRequest.TeamRepresentativeId))
+            {
+                string? seamRepresentativeId = settlementStatementRequest.TeamRepresentativeId?.Trim();
+                settlements = settlements.Where(x => x.TeamRepresentative?.ExternalId == seamRepresentativeId);
+            }
+
+            if (!string.IsNullOrEmpty(settlementStatementRequest.TeamRepresentativeName))
+            {
+                string? teamRepresentativeName = settlementStatementRequest.TeamRepresentativeName?.Trim();
+                settlements = settlements.Where(x => x.TeamRepresentative?.Name == teamRepresentativeName);
+
+            }
+
+            if (!string.IsNullOrEmpty(settlementStatementRequest.ProgramName))
+            {
+                string programName = settlementStatementRequest.ProgramName.Trim();
+                settlements = settlements.Where(x => x.TeamRepresentative?.Segment == programName);
+            }
+            settlements = settlements.Distinct();
 
             // Map to response
             var results = settlements
                 .Select(s => new SettlementStatementResponse
                 {
+                    SettlementId = s.Id, // ensure uniqueness for React key
                     MemberId = s.Member?.MemberCode ?? string.Empty,
                     MemberName = s.Member?.FullName ?? string.Empty,
                     JoinedDate = s.JoinedDate.ToDateTime(TimeOnly.MinValue),
                     LastGamingDate = s.LastGamingDate.ToDateTime(TimeOnly.MinValue),
                     Eligible = s.Eligible,
                     CasinoWinLoss = s.CasinoWinLoss
-                })
+                }).OrderByDescending(x => x.JoinedDate)
                 .ToList();
 
             return results;
+        }
+
+        public async Task<List<TeamRepresentativesResponse>> GetTeamRepresentatives(TeamRepresentativesRequest request)
+        {
+            if (request == null) throw new ArgumentNullException(nameof(request));
+
+            var query = _dbContext.AwardSettlements
+                .AsNoTracking()
+                .AsQueryable();
+
+            if (request.Month.HasValue)
+            {
+                var m = request.Month.Value;
+                var monthStart = new DateOnly(m.Year, m.Month, 1);
+                query = query.Where(s => s.MonthStart == monthStart);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.TeamRepresentativeId))
+            {
+                var trId = request.TeamRepresentativeId.Trim();
+                query = query.Where(s => s.TeamRepresentative != null && s.TeamRepresentative.ExternalId == trId);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.TeamRepresentativeName))
+            {
+                var trName = request.TeamRepresentativeName.Trim();
+                query = query.Where(s => s.TeamRepresentative != null && s.TeamRepresentative.Name == trName);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.ProgramName))
+            {
+                var program = request.ProgramName.Trim();
+                query = query.Where(s => s.TeamRepresentative != null && s.TeamRepresentative.Segment == program);
+            }
+
+            // Giữ toàn bộ phần group/select có thể translate sang SQL
+            var aggregates = await query
+                .GroupBy(s => new
+                {
+                    s.TeamRepresentativeId,
+                    s.MonthStart,
+                    Name = s.TeamRepresentative!.Name,
+                    ExternalId = s.TeamRepresentative!.ExternalId,
+                    Segment = s.TeamRepresentative!.Segment,
+                    SettlementDoc = s.SettlementDoc,
+                    CasinoWinLoss = s.CasinoWinLoss
+                })
+                .Select(g => new
+                {
+                    g.Key.TeamRepresentativeId,
+                    g.Key.MonthStart,
+                    TeamRepresentativeName = g.Key.Name,
+                    TeamRepresentativeExternalId = g.Key.ExternalId,
+                    ProgramName = g.Key.Segment,
+                    AwardTotal = g.Sum(x => x.AwardSettlementAmount),
+                    Segment = g.Key.Segment,
+                    SettlementDoc = g.Key.SettlementDoc,
+                    CasinoWinLoss = g.Key.CasinoWinLoss,
+                    // Lấy status từ bảng PaymentTeamRepresentatives theo (TRId, MonthStart)
+                    Status = _dbContext.PaymentTeamRepresentatives
+                        .Where(p => p.TeamRepresentativeId == g.Key.TeamRepresentativeId && p.MonthStart == g.Key.MonthStart)
+                        .Select(p => p.Status)
+                        .FirstOrDefault()
+                })
+                .OrderByDescending(x => x.MonthStart)
+                .ThenBy(x => x.TeamRepresentativeName)
+                .ToListAsync();
+
+            // Chuyển DateOnly -> DateTime sau khi materialize
+            var result = aggregates.Select(x => new TeamRepresentativesResponse
+            {
+                Segment = x.Segment,
+                CasinoWinLoss = x.CasinoWinLoss,
+                SettlementDoc = x.SettlementDoc,
+                TeamRepresentativeName = x.TeamRepresentativeName ?? string.Empty,
+                TeamRepresentativeId = x.TeamRepresentativeExternalId ?? string.Empty,
+                ProgramName = x.ProgramName ?? string.Empty,
+                Month = x.MonthStart.ToDateTime(TimeOnly.MinValue),
+                AwardTotal = x.AwardTotal,
+                Status = string.Equals(x.Status, "Void", StringComparison.OrdinalIgnoreCase) ? "New" : "Void",
+                IsPayment = string.Equals(x.Status, "Void", StringComparison.OrdinalIgnoreCase)
+            }).ToList();
+
+            return result;
+        }
+
+        public async Task<PaymentTeamRepresentativesResponse> PaymentTeamRepresentatives(PaymentTeamRepresentativesRequest paymentTeam)
+        {
+            if (paymentTeam == null) throw new ArgumentNullException(nameof(paymentTeam));
+            if (!paymentTeam.Month.HasValue) throw new ArgumentException("Month is required.", nameof(paymentTeam.Month));
+
+            // Resolve TeamRepresentative by ExternalId (preferred) or by Name
+            var teamRepQuery = _dbContext.TeamRepresentatives.AsQueryable();
+            if (!string.IsNullOrWhiteSpace(paymentTeam.TeamRepresentativeId))
+            {
+                var extId = paymentTeam.TeamRepresentativeId.Trim();
+                teamRepQuery = teamRepQuery.Where(tr => tr.ExternalId == extId);
+            }
+            else if (!string.IsNullOrWhiteSpace(paymentTeam.TeamRepresentativeName))
+            {
+                var name = paymentTeam.TeamRepresentativeName.Trim();
+                teamRepQuery = teamRepQuery.Where(tr => tr.Name == name);
+            }
+            else
+            {
+                throw new ArgumentException("TeamRepresentativeId or TeamRepresentativeName is required.");
+            }
+
+            var teamRep = await teamRepQuery.FirstOrDefaultAsync();
+            if (teamRep == null) throw new InvalidOperationException("TeamRepresentative not found.");
+
+            var month = paymentTeam.Month.Value;
+            var monthStart = new DateOnly(month.Year, month.Month, 1);
+
+            var existed = await _dbContext.PaymentTeamRepresentatives
+                .AnyAsync(p => p.TeamRepresentativeId == teamRep.Id && p.MonthStart == monthStart && p.Status == "Void");
+            if (existed)
+            {
+                return new PaymentTeamRepresentativesResponse { IsPayment = false };
+            }
+
+            var awardTotal = await _dbContext.AwardSettlements
+                .Where(s => s.TeamRepresentativeId == teamRep.Id && s.MonthStart == monthStart)
+                .SumAsync(s => (decimal?)s.AwardSettlementAmount) ?? 0m;
+
+            var payment = new PaymentTeamRepresentative
+            {
+                Id = Guid.NewGuid(),
+                TeamRepresentativeId = teamRep.Id,
+                MonthStart = monthStart,
+                AwardTotal = awardTotal,
+                Status = "Inprocess",
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await _dbContext.PaymentTeamRepresentatives.AddAsync(payment);
+            await _dbContext.SaveChangesAsync();
+
+            try
+            {
+                payment.Status = "Void";
+                payment.UpdatedAt = DateTime.UtcNow;
+                _dbContext.PaymentTeamRepresentatives.Update(payment);
+                await _dbContext.SaveChangesAsync();
+
+                return new PaymentTeamRepresentativesResponse
+                {
+                    IsPayment = true
+                };
+            }
+            catch
+            {
+                payment.Status = "Falied";
+                payment.UpdatedAt = DateTime.UtcNow;
+                _dbContext.PaymentTeamRepresentatives.Update(payment);
+                await _dbContext.SaveChangesAsync();
+
+                return new PaymentTeamRepresentativesResponse
+                {
+                    IsPayment = false
+                };
+            }
         }
     }
 }

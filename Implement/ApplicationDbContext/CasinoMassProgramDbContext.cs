@@ -1,4 +1,4 @@
-using Implement.EntityModels;
+﻿using Implement.EntityModels;
 using Microsoft.EntityFrameworkCore;
 
 namespace Implement.ApplicationDbContext;
@@ -14,6 +14,7 @@ public class CasinoMassProgramDbContext : DbContext
     public DbSet<AwardSettlement> AwardSettlements { get; set; }
     public DbSet<TeamRepresentative> TeamRepresentatives { get; set; }
     public DbSet<TeamRepresentativeMember> TeamRepresentativeMembers { get; set; }
+    public DbSet<PaymentTeamRepresentative> PaymentTeamRepresentatives { get; set; } // NEW
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -64,5 +65,21 @@ public class CasinoMassProgramDbContext : DbContext
         modelBuilder.Entity<AwardSettlement>()
             .Property(a => a.AwardSettlementAmount)
             .HasColumnType("decimal(18,2)");
+
+        // PaymentTeamRepresentative config
+        modelBuilder.Entity<PaymentTeamRepresentative>()
+            .Property(p => p.AwardTotal)
+            .HasColumnType("decimal(18,2)");
+
+        modelBuilder.Entity<PaymentTeamRepresentative>()
+            .HasOne(p => p.TeamRepresentative)
+            .WithMany()
+            .HasForeignKey(p => p.TeamRepresentativeId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Ngăn record trùng theo (TeamRepresentative, MonthStart)
+        modelBuilder.Entity<PaymentTeamRepresentative>()
+            .HasIndex(p => new { p.TeamRepresentativeId, p.MonthStart })
+            .IsUnique();
     }
 }

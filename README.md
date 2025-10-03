@@ -4,6 +4,6 @@
 
 •	From the solution folder:
 
-•	dotnet ef migrations add Initial -p Implement -s "CASINO MASS PROGRAM"
+•	dotnet ef migrations add Initial -p Implement -s "CasinoMassProgram"
 
-•	dotnet ef database update -p Implement -s "CASINO MASS PROGRAM"
+•	dotnet ef database update -p Implement -s "CasinoMassProgram"
