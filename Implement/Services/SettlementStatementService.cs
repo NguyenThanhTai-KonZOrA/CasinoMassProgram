@@ -108,32 +108,35 @@ namespace Implement.Services
                 query = query.Where(s => s.TeamRepresentative != null && s.TeamRepresentative.Segment == program);
             }
 
-            // Giữ toàn bộ phần group/select có thể translate sang SQL
+            // Group by ExternalId + MonthStart (và các thuộc tính stable khác)
             var aggregates = await query
                 .GroupBy(s => new
                 {
-                    s.TeamRepresentativeId,
                     s.MonthStart,
-                    Name = s.TeamRepresentative!.Name,
                     ExternalId = s.TeamRepresentative!.ExternalId,
-                    Segment = s.TeamRepresentative!.Segment,
-                    SettlementDoc = s.SettlementDoc,
-                    CasinoWinLoss = s.CasinoWinLoss
+                    Name = s.TeamRepresentative!.Name,
+                    Segment = s.TeamRepresentative!.Segment
                 })
                 .Select(g => new
                 {
-                    g.Key.TeamRepresentativeId,
                     g.Key.MonthStart,
                     TeamRepresentativeName = g.Key.Name,
                     TeamRepresentativeExternalId = g.Key.ExternalId,
                     ProgramName = g.Key.Segment,
                     AwardTotal = g.Sum(x => x.AwardSettlementAmount),
                     Segment = g.Key.Segment,
-                    SettlementDoc = g.Key.SettlementDoc,
-                    CasinoWinLoss = g.Key.CasinoWinLoss,
-                    // Lấy status từ bảng PaymentTeamRepresentatives theo (TRId, MonthStart)
+                    CasinoWinLoss = g.Sum(x => x.CasinoWinLoss),
+                    SettlementDoc = g.Max(x => x.SettlementDoc),
+                    // Lấy status: map ExternalId -> TeamRepresentative.Id rồi đối chiếu theo MonthStart
                     Status = _dbContext.PaymentTeamRepresentatives
-                        .Where(p => p.TeamRepresentativeId == g.Key.TeamRepresentativeId && p.MonthStart == g.Key.MonthStart)
+                        .Where(p =>
+                            p.MonthStart == g.Key.MonthStart &&
+                            p.TeamRepresentativeId ==
+                                _dbContext.TeamRepresentatives
+                                    .Where(tr => tr.ExternalId == g.Key.ExternalId)
+                                    .Select(tr => tr.Id)
+                                    .FirstOrDefault()
+                        )
                         .Select(p => p.Status)
                         .FirstOrDefault()
                 })
@@ -152,7 +155,7 @@ namespace Implement.Services
                 ProgramName = x.ProgramName ?? string.Empty,
                 Month = x.MonthStart.ToDateTime(TimeOnly.MinValue),
                 AwardTotal = x.AwardTotal,
-                Status = string.Equals(x.Status, "Void", StringComparison.OrdinalIgnoreCase) ? "New" : "Void",
+                Status = x.Status ?? string.Empty,
                 IsPayment = string.Equals(x.Status, "Void", StringComparison.OrdinalIgnoreCase)
             }).ToList();
 

@@ -1,4 +1,5 @@
 using Implement.Services.Interface;
+using Implement.ViewModels.Request;
 using Implement.ViewModels.Response;
 using Microsoft.AspNetCore.Mvc;
 
@@ -70,7 +71,6 @@ public class ImportExcelController : ControllerBase
     }
 
     [HttpGet("{batchId:guid}/details")]
-    [ProducesResponseType(typeof(ImportDetailsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetDetails([FromRoute] Guid batchId)
     {
         var details = await _excelService.GetBatchDetailsAsync(batchId);
@@ -78,10 +78,16 @@ public class ImportExcelController : ControllerBase
     }
 
     [HttpGet("{batchId:guid}/details-paging")]
-    [ProducesResponseType(typeof(ImportDetailsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetDetails([FromRoute] Guid batchId, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
         var details = await _excelService.GetBatchDetailsPagingAsync(batchId, page, pageSize);
         return Ok(details);
+    }
+
+    [HttpPost("crp-settlement")]
+    public async Task<IActionResult> CreateCrpSettlement(GenerateCrpReportRequest crpReportRequest)
+    {
+        var result = await _excelService.GenerateSettlementPaymentReportAsync(crpReportRequest);
+        return File(result.Content, result.ContentType, result.FileName);
     }
 }

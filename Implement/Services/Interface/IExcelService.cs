@@ -1,4 +1,5 @@
-﻿using Implement.ViewModels.Response;
+﻿using Implement.ViewModels.Request;
+using Implement.ViewModels.Response;
 using Microsoft.AspNetCore.Http;
 
 namespace Implement.Services.Interface
@@ -11,5 +12,6 @@ namespace Implement.Services.Interface
         Task<(byte[] Content, string FileName, string ContentType)> DownloadAnnotatedAsync(Guid batchId);
         Task<ImportDetailsResponse> GetBatchDetailsAsync(Guid batchId);
         Task<ImportDetailsResponse> GetBatchDetailsPagingAsync(Guid batchId, int page = 1, int pageSize = 50);
+        Task<(byte[] Content, string FileName, string ContentType)> GenerateSettlementPaymentReportAsync(GenerateCrpReportRequest generateCrpReport);
     }
 }

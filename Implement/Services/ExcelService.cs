@@ -1,10 +1,12 @@
-using Azure.Core;
+﻿using Azure.Core;
 using ClosedXML.Excel;
 using Implement.EntityModels;
 using Implement.Repositories.Interface;
 using Implement.Services.Interface;
 using Implement.UnitOfWork;
+using Implement.ViewModels.Request;
 using Implement.ViewModels.Response;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
@@ -24,6 +26,8 @@ public class ExcelService : IExcelService
     private readonly IMemberRepository _memberRepository;
     private readonly ITeamRepresentativeMemberRepository _teamRepresentativeMemberRepository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IHostingEnvironment _hostingEnvironment;
+
     public ExcelService(
         ILogger<ExcelService> logger,
         IImportBatchRepository importBatchRepository,
@@ -33,7 +37,7 @@ public class ExcelService : IExcelService
         ITeamRepresentativeRepository teamRepresentativeRepository,
         ITeamRepresentativeMemberRepository teamRepresentativeMemberRepository,
         IMemberRepository memberRepository,
-        IUnitOfWork unitOfWork
+        IUnitOfWork unitOfWork, IHostingEnvironment hostingEnvironment
     )
     {
         _logger = logger;
@@ -45,6 +49,7 @@ public class ExcelService : IExcelService
         _memberRepository = memberRepository;
         _teamRepresentativeMemberRepository = teamRepresentativeMemberRepository;
         _unitOfWork = unitOfWork;
+        _hostingEnvironment = hostingEnvironment;
     }
 
     // Expected headers (ALL required)
@@ -509,6 +514,112 @@ public class ExcelService : IExcelService
         wb.SaveAs(ms);
         var fileName = Path.GetFileNameWithoutExtension(batch.FileName) + "_annotated.xlsx";
         return (ms.ToArray(), fileName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    }
+
+    public async Task<(byte[] Content, string FileName, string ContentType)> GenerateSettlementPaymentReportAsync(GenerateCrpReportRequest generateCrp)
+    {
+        // Validate input and load data
+        var tr = await _teamRepresentativeRepository.FirstOrDefaultAsync(x => x.ExternalId == generateCrp.TeamRepresentativeId);
+        if (tr is null) throw new Exception("TeamRepresentative not found.");
+
+        var monthStart = new DateOnly(generateCrp.Month.Year, generateCrp.Month.Month, 1);
+
+        var settlements = await _awardSettlementRepository.FindAsync(
+            s => s.TeamRepresentative.ExternalId == generateCrp.TeamRepresentativeId && s.MonthStart == monthStart,
+            s => s.Member!,
+            s => s.TeamRepresentative!
+        );
+
+        using var wb = new XLWorkbook();
+        var ws = wb.AddWorksheet("Settlement");
+
+        // Define headers
+        var headers = new[]
+        {
+        "SEGMENT",
+        "Team Representative",
+        "ID",
+        "Month",
+        "Settlement Doc",
+        "No",
+        "Member ID",
+        "Member name",
+        "Joined date",
+        "Last gaming date",
+        "Eligible (Y/N)",
+        "Casino win/(loss)",
+        "Award settlement"
+    };
+
+        // Write headers (row 1)
+        for (int i = 0; i < headers.Length; i++)
+        {
+            var cell = ws.Cell(1, i + 1);
+            cell.Value = headers[i];
+            cell.Style.Font.Bold = true;
+            cell.Style.Fill.BackgroundColor = XLColor.LightGray;
+            cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            cell.Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+        }
+
+        // Helper setters
+        static DateTime ToDateTime(DateOnly d) => d.ToDateTime(TimeOnly.MinValue);
+
+        // Write rows starting at row 2
+        int row = 2;
+        foreach (var s in settlements.OrderBy(x => x.No).ThenBy(x => x.Member!.MemberCode))
+        {
+            ws.Cell(row, 1).Value = tr.Segment ?? string.Empty;
+            ws.Cell(row, 2).Value = tr.Name ?? string.Empty;
+            ws.Cell(row, 3).Value = tr.ExternalId ?? string.Empty;
+
+            ws.Cell(row, 4).Value = ToDateTime(monthStart);
+            ws.Cell(row, 4).Style.DateFormat.Format = "mm/yyyy";
+
+            ws.Cell(row, 5).Value = s.SettlementDoc ?? string.Empty;
+
+            ws.Cell(row, 6).Value = s.No;
+
+            ws.Cell(row, 7).Value = s.Member?.MemberCode ?? string.Empty;
+            ws.Cell(row, 8).Value = s.Member?.FullName ?? string.Empty;
+
+            ws.Cell(row, 9).Value = ToDateTime(s.JoinedDate);
+            ws.Cell(row, 9).Style.DateFormat.Format = "dd/mm/yyyy";
+
+            ws.Cell(row, 10).Value = ToDateTime(s.LastGamingDate);
+            ws.Cell(row, 10).Style.DateFormat.Format = "dd/mm/yyyy";
+
+            ws.Cell(row, 11).Value = s.Eligible ? "Y" : "N";
+
+            ws.Cell(row, 12).Value = s.CasinoWinLoss;
+            ws.Cell(row, 12).Style.NumberFormat.Format = "#,##0.00;[Red]-#,##0.00";
+
+            ws.Cell(row, 13).Value = s.AwardSettlementAmount;
+            ws.Cell(row, 13).Style.NumberFormat.Format = "#,##0.00;[Red]-#,##0.00";
+
+            row++;
+        }
+
+        // Totals row (optional)
+        if (row > 2)
+        {
+            var totalRow = row;
+            ws.Cell(totalRow, 12).FormulaA1 = $"SUM(L2:L{row - 1})";
+            ws.Cell(totalRow, 13).FormulaA1 = $"SUM(M2:M{row - 1})";
+            ws.Range(totalRow, 1, totalRow, headers.Length).Style.Font.Bold = true;
+            ws.Cell(totalRow, 11).Value = "TOTAL";
+            ws.Columns(12, 13).Style.NumberFormat.Format = "#,##0.00;[Red]-#,##0.00";
+        }
+
+        // Adjust column widths
+        ws.Columns().AdjustToContents();
+
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+
+        var fileName = $"CRPSettlement_{tr.ExternalId}_{monthStart:yyyyMM}.xlsx";
+        const string contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        return (ms.ToArray(), fileName, contentType);
     }
 
     public async Task<List<ImportBatch>> ListBatchesAsync()
