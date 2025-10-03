@@ -85,7 +85,8 @@ public class ImportExcelController : ControllerBase
     }
 
     [HttpPost("crp-settlement")]
-    public async Task<IActionResult> CreateCrpSettlement(GenerateCrpReportRequest crpReportRequest)
+    [Produces("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
+    public async Task<IActionResult> CreateCrpSettlement([FromBody] GenerateCrpReportRequest crpReportRequest)
     {
         var result = await _excelService.GenerateSettlementPaymentReportAsync(crpReportRequest);
         return File(result.Content, result.ContentType, result.FileName);

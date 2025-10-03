@@ -8,18 +8,15 @@ namespace Implement.EntityModels
         [Key]
         public Guid Id { get; set; }
 
-        // FK tới TeamRepresentative
         public Guid TeamRepresentativeId { get; set; }
         public TeamRepresentative? TeamRepresentative { get; set; }
 
-        // Tháng áp dụng (ngày đầu tháng)
         public DateOnly MonthStart { get; set; }
 
-        // Tổng tiền thanh toán theo tháng
         [Column(TypeName = "decimal(18,2)")]
         public decimal AwardTotal { get; set; }
 
-        // Trạng thái: Inprocess | Void | Falied
+        // Status: Inprocess | Void | Falied
         [MaxLength(50)]
         public string Status { get; set; } = "Inprocess";
 

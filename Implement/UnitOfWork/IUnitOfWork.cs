@@ -12,6 +12,9 @@ namespace Implement.UnitOfWork
         IGenericRepository<Member> Member { get; }
         IGenericRepository<TeamRepresentative> TeamRepresentative { get; }
         IGenericRepository<TeamRepresentativeMember> TeamRepresentativeMember { get; }
+        IGenericRepository<PaymentTeamRepresentative> PaymentTeamRepresentative { get; }
         Task<int> CompleteAsync();
+        void Update();
+        void UpdateRange();
     }
 }

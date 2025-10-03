@@ -10,7 +10,6 @@ public class ImportBatch
     public int ValidRows { get; set; }
     public int InvalidRows { get; set; }
 
-    // Store original file to reproduce annotated download
     public byte[]? FileContent { get; set; }
 
     public ICollection<ImportRow> Rows { get; set; } = new List<ImportRow>();

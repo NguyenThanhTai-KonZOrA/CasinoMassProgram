@@ -6,15 +6,12 @@ public class TeamRepresentative
 {
     public Guid Id { get; set; } = Guid.NewGuid();
 
-    // Excel "ID" column; unique key for a representative
     [MaxLength(100)]
-    public string ExternalId { get; set; } = string.Empty;
+    public string TeamRepresentativeId { get; set; } = string.Empty;
 
-    // Excel "Team Representative" column (display name)
     [MaxLength(200)]
-    public string Name { get; set; } = string.Empty;
+    public string TeamRepresentativeName { get; set; } = string.Empty;
 
-    // Excel "SEGMENT" column (optional attribute for the rep)
     [MaxLength(100)]
     public string? Segment { get; set; }
 

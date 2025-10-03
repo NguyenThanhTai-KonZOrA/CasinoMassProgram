@@ -1,5 +1,5 @@
-﻿using Azure.Core;
-using ClosedXML.Excel;
+﻿using ClosedXML.Excel;
+using Common.Enums;
 using Implement.EntityModels;
 using Implement.Repositories.Interface;
 using Implement.Services.Interface;
@@ -100,7 +100,7 @@ public class ExcelService : IExcelService
         {
             FileName = file.FileName,
             UploadedAt = DateTime.UtcNow,
-            Status = "Validated",
+            Status = ExcelProcessEnum.Validated.ToString(),
             FileContent = ms.ToArray()
         };
 
@@ -349,7 +349,7 @@ public class ExcelService : IExcelService
 
         // Preload existing reps and members to reduce DB round-trips
         var existingReps = await _teamRepresentativeRepository.GetAllAsync();
-        foreach (var r in existingReps) upsertedReps[r.ExternalId] = r;
+        foreach (var r in existingReps) upsertedReps[r.TeamRepresentativeId] = r;
 
         var existingMembers = await _memberRepository.GetAllAsync();
         foreach (var m in existingMembers) upsertedMembers[m.MemberCode] = m;
@@ -374,8 +374,8 @@ public class ExcelService : IExcelService
             {
                 rep = new TeamRepresentative
                 {
-                    ExternalId = repExternalId,
-                    Name = Get("Team Representative"),
+                    TeamRepresentativeId = repExternalId,
+                    TeamRepresentativeName = Get("Team Representative"),
                     Segment = Get("SEGMENT")
                 };
                 await _teamRepresentativeRepository.AddAsync(rep);
@@ -384,7 +384,7 @@ public class ExcelService : IExcelService
             else
             {
                 // Keep existing values; if empty, fill from current row
-                if (string.IsNullOrWhiteSpace(rep.Name)) rep.Name = Get("Team Representative");
+                if (string.IsNullOrWhiteSpace(rep.TeamRepresentativeName)) rep.TeamRepresentativeName = Get("Team Representative");
                 if (string.IsNullOrWhiteSpace(rep.Segment)) rep.Segment = Get("SEGMENT");
             }
 
@@ -444,7 +444,7 @@ public class ExcelService : IExcelService
         }
 
         _awardSettlementRepository.AddRange(toInsertSettlements);
-        batch.Status = "Committed";
+        batch.Status = ExcelProcessEnum.Approved.ToString();
         await _unitOfWork.CompleteAsync();
 
         return new ApprovedImportResponse
@@ -516,112 +516,152 @@ public class ExcelService : IExcelService
         return (ms.ToArray(), fileName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     }
 
-    public async Task<(byte[] Content, string FileName, string ContentType)> GenerateSettlementPaymentReportAsync(GenerateCrpReportRequest generateCrp)
+    public async Task<(byte[] Content, string FileName, string ContentType)> GenerateSettlementPaymentReportAsync(GenerateCrpReportRequest generateCrpReport)
     {
-        // Validate input and load data
-        var tr = await _teamRepresentativeRepository.FirstOrDefaultAsync(x => x.ExternalId == generateCrp.TeamRepresentativeId);
-        if (tr is null) throw new Exception("TeamRepresentative not found.");
+        if (generateCrpReport == null) throw new ArgumentNullException(nameof(generateCrpReport));
+        if (string.IsNullOrWhiteSpace(generateCrpReport.TeamRepresentativeId))
+            throw new ArgumentException("TeamRepresentativeId is required.", nameof(generateCrpReport.TeamRepresentativeId));
 
-        var monthStart = new DateOnly(generateCrp.Month.Year, generateCrp.Month.Month, 1);
+        var monthStart = new DateOnly(generateCrpReport.Month.Year, generateCrpReport.Month.Month, 1);
 
+        // Resolve TeamRepresentative by ExternalId or Guid
+        var allReps = await _teamRepresentativeRepository.GetAllAsync();
+        var rep = allReps.FirstOrDefault(r =>
+            string.Equals(r.TeamRepresentativeId, generateCrpReport.TeamRepresentativeId, StringComparison.OrdinalIgnoreCase))
+            ?? (Guid.TryParse(generateCrpReport.TeamRepresentativeId, out var repGuid)
+                ? allReps.FirstOrDefault(r => r.Id == repGuid)
+                : null);
+
+        if (rep is null)
+            throw new InvalidOperationException($"TeamRepresentative '{generateCrpReport.TeamRepresentativeId}' not found.");
+
+        // Load settlements for this TR and month, include Member for export
         var settlements = await _awardSettlementRepository.FindAsync(
-            s => s.TeamRepresentative.ExternalId == generateCrp.TeamRepresentativeId && s.MonthStart == monthStart,
+            s => s.TeamRepresentativeId == rep.Id && s.MonthStart == monthStart,
             s => s.Member!,
             s => s.TeamRepresentative!
         );
 
-        using var wb = new XLWorkbook();
-        var ws = wb.AddWorksheet("Settlement");
+        // Try get AwardTotal from PaymentTeamRepresentatives
+        var payments = await _unitOfWork.PaymentTeamRepresentative.GetAllNoTrackingAsync();
+        var payment = payments.FirstOrDefault(p => p.TeamRepresentativeId == rep.Id && p.MonthStart == monthStart);
+        var awardTotal = payment?.AwardTotal ?? settlements.Sum(s => s.AwardSettlementAmount);
 
-        // Define headers
-        var headers = new[]
+        // Path to template
+        var templatePath = Path.Combine(_hostingEnvironment.ContentRootPath, "Resources", "CRP Settlement Sample.xlsx");
+        if (!File.Exists(templatePath))
+            throw new FileNotFoundException("Template not found. Ensure it’s copied to output: Resources/CRP Settlement Sample.xlsx", templatePath);
+
+        using var wb = new XLWorkbook(templatePath);
+        var ws = wb.Worksheets.FirstOrDefault() ?? throw new InvalidOperationException("Template has no worksheets.");
+        ws.Cell("E6").Value = rep.TeamRepresentativeName;
+        ws.Cell("E7").Value = rep.TeamRepresentativeId;
+        ws.Cell("E9").Value = monthStart.ToDateTime(TimeOnly.MinValue);
+        var neededHeaders = new[]
         {
-        "SEGMENT",
-        "Team Representative",
-        "ID",
-        "Month",
-        "Settlement Doc",
-        "No",
-        "Member ID",
-        "Member name",
-        "Joined date",
-        "Last gaming date",
-        "Eligible (Y/N)",
-        "Casino win/(loss)",
-        "Award settlement"
+        "No.", "Member ID", "Member name", "Joined date", "Last gaming date", "Eligible (Y/N)", "Casino win/(loss)"
     };
 
-        // Write headers (row 1)
-        for (int i = 0; i < headers.Length; i++)
+        int headerRow = 1;
+        Dictionary<string, int> headerCols = new(StringComparer.OrdinalIgnoreCase);
+
+        for (int r = 1; r <= 30; r++)
         {
-            var cell = ws.Cell(1, i + 1);
-            cell.Value = headers[i];
-            cell.Style.Font.Bold = true;
-            cell.Style.Fill.BackgroundColor = XLColor.LightGray;
-            cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-            cell.Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+            var cols = ws.Row(r).CellsUsed().ToDictionary(
+                c => c.Address.ColumnNumber,
+                c => (c.GetString() ?? string.Empty).Trim()
+            );
+
+            if (cols.Values.Any(v => v.Equals("Member ID", StringComparison.OrdinalIgnoreCase)) &&
+                cols.Values.Any(v => v.Equals("Member name", StringComparison.OrdinalIgnoreCase)))
+            {
+                headerRow = r;
+                headerCols = cols
+                    .GroupBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First().Key, StringComparer.OrdinalIgnoreCase);
+                break;
+            }
         }
 
-        // Helper setters
-        static DateTime ToDateTime(DateOnly d) => d.ToDateTime(TimeOnly.MinValue);
-
-        // Write rows starting at row 2
-        int row = 2;
-        foreach (var s in settlements.OrderBy(x => x.No).ThenBy(x => x.Member!.MemberCode))
+        foreach (var h in neededHeaders)
         {
-            ws.Cell(row, 1).Value = tr.Segment ?? string.Empty;
-            ws.Cell(row, 2).Value = tr.Name ?? string.Empty;
-            ws.Cell(row, 3).Value = tr.ExternalId ?? string.Empty;
+            if (!headerCols.ContainsKey(h))
+                throw new InvalidOperationException($"Template is missing required header: '{h}'.");
+        }
 
-            ws.Cell(row, 4).Value = ToDateTime(monthStart);
-            ws.Cell(row, 4).Style.DateFormat.Format = "mm/yyyy";
+        void TrySet(string headerText, string value)
+        {
+            var cell = ws.CellsUsed(c => string.Equals(c.GetString().Trim(), headerText, StringComparison.OrdinalIgnoreCase)).FirstOrDefault();
+            if (cell != null) cell.CellRight().Value = value;
+        }
+        TrySet("Team Representative", $"{rep.TeamRepresentativeName} ({rep.TeamRepresentativeId})");
+        TrySet("Month", $"{monthStart:yyyy-MM}");
 
-            ws.Cell(row, 5).Value = s.SettlementDoc ?? string.Empty;
+        var firstDataRow = headerRow + 1;
+        var lastUsedRow = ws.LastRowUsed()?.RowNumber() ?? firstDataRow - 1;
+        if (lastUsedRow >= firstDataRow)
+            ws.Rows(firstDataRow, lastUsedRow).Clear(XLClearOptions.Contents);
 
-            ws.Cell(row, 6).Value = s.No;
+        int idx(string header) => headerCols[header];
 
-            ws.Cell(row, 7).Value = s.Member?.MemberCode ?? string.Empty;
-            ws.Cell(row, 8).Value = s.Member?.FullName ?? string.Empty;
+        var row = firstDataRow;
+        foreach (var (s, no) in settlements.Select((s, i) => (s, i + 1)))
+        {
+            var memberId = s.Member?.MemberCode ?? string.Empty;
+            var memberName = s.Member?.FullName ?? string.Empty;
+            var joined = s.JoinedDate.ToDateTime(TimeOnly.MinValue);
+            var lastGaming = s.LastGamingDate.ToDateTime(TimeOnly.MinValue);
+            var eligible = s.Eligible ? "Y" : "N";
+            var winLoss = s.CasinoWinLoss;
 
-            ws.Cell(row, 9).Value = ToDateTime(s.JoinedDate);
-            ws.Cell(row, 9).Style.DateFormat.Format = "dd/mm/yyyy";
+            ws.Cell(row, idx("No.")).Value = no;
+            ws.Cell(row, idx("Member ID")).Value = memberId;
+            ws.Cell(row, idx("Member name")).Value = memberName;
 
-            ws.Cell(row, 10).Value = ToDateTime(s.LastGamingDate);
-            ws.Cell(row, 10).Style.DateFormat.Format = "dd/mm/yyyy";
+            ws.Cell(row, idx("Joined date")).Value = joined;
+            ws.Cell(row, idx("Joined date")).Style.DateFormat.Format = "dd/MM/yyyy";
 
-            ws.Cell(row, 11).Value = s.Eligible ? "Y" : "N";
+            ws.Cell(row, idx("Last gaming date")).Value = lastGaming;
+            ws.Cell(row, idx("Last gaming date")).Style.DateFormat.Format = "dd/MM/yyyy";
 
-            ws.Cell(row, 12).Value = s.CasinoWinLoss;
-            ws.Cell(row, 12).Style.NumberFormat.Format = "#,##0.00;[Red]-#,##0.00";
+            ws.Cell(row, idx("Eligible (Y/N)")).Value = eligible;
 
-            ws.Cell(row, 13).Value = s.AwardSettlementAmount;
-            ws.Cell(row, 13).Style.NumberFormat.Format = "#,##0.00;[Red]-#,##0.00";
+            ws.Cell(row, idx("Casino win/(loss)")).Value = (double)winLoss;
+            ws.Cell(row, idx("Casino win/(loss)")).Style.NumberFormat.Format = "#,##0.00;(#,##0.00)";
 
             row++;
         }
 
-        // Totals row (optional)
-        if (row > 2)
-        {
-            var totalRow = row;
-            ws.Cell(totalRow, 12).FormulaA1 = $"SUM(L2:L{row - 1})";
-            ws.Cell(totalRow, 13).FormulaA1 = $"SUM(M2:M{row - 1})";
-            ws.Range(totalRow, 1, totalRow, headers.Length).Style.Font.Bold = true;
-            ws.Cell(totalRow, 11).Value = "TOTAL";
-            ws.Columns(12, 13).Style.NumberFormat.Format = "#,##0.00;[Red]-#,##0.00";
-        }
+        var labelCol = headerCols.ContainsKey("Member name") ? idx("Member name") : idx("Member ID");
+        var numberCol = idx("Casino win/(loss)");
 
-        // Adjust column widths
+        var totalWinLoss = settlements.Sum(s => s.CasinoWinLoss);
+
+        ws.Cell(row, labelCol).Value = "Tổng/Total:";
+        ws.Cell(row, labelCol).Style.Font.Bold = true;
+
+        ws.Cell(row, numberCol).Value = (double)totalWinLoss;
+        ws.Cell(row, numberCol).Style.NumberFormat.Format = "#,##0.00;(#,##0.00)";
+        ws.Cell(row, numberCol).Style.Font.Bold = true;
+
+        ws.Row(row).Style.Border.TopBorder = XLBorderStyleValues.Thin;
+        row++;
+
+        ws.Cell(row, labelCol).Value = "Chi trả thưởng/Award settlement:";
+        ws.Cell(row, labelCol).Style.Font.Bold = true;
+
+        ws.Cell(row, numberCol).Value = (double)awardTotal;
+        ws.Cell(row, numberCol).Style.NumberFormat.Format = "#,##0.00;(#,##0.00)";
+        ws.Cell(row, numberCol).Style.Font.Bold = true;
+
         ws.Columns().AdjustToContents();
 
         using var ms = new MemoryStream();
         wb.SaveAs(ms);
 
-        var fileName = $"CRPSettlement_{tr.ExternalId}_{monthStart:yyyyMM}.xlsx";
-        const string contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-        return (ms.ToArray(), fileName, contentType);
+        var fileName = $"CRP_Settlement_{rep.TeamRepresentativeId}_{monthStart:yyyyMM}.xlsx";
+        return (ms.ToArray(), fileName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     }
-
     public async Task<List<ImportBatch>> ListBatchesAsync()
     {
         var batch = await _importBatchRepository.GetAllNoTrackingAsync();

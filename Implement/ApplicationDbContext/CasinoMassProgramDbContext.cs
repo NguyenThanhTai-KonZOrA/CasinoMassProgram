@@ -38,7 +38,7 @@ public class CasinoMassProgramDbContext : DbContext
 
         // TeamRepresentative uniqueness by external ID
         modelBuilder.Entity<TeamRepresentative>()
-            .HasIndex(tr => tr.ExternalId)
+            .HasIndex(tr => tr.TeamRepresentativeId)
             .IsUnique();
 
         // Join table composite PK and relationships

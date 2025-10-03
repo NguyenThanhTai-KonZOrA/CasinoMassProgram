@@ -1,7 +1,9 @@
-﻿using Implement.ApplicationDbContext;
+﻿using Common.Enums;
+using Implement.ApplicationDbContext;
 using Implement.EntityModels;
 using Implement.Repositories.Interface;
 using Implement.Services.Interface;
+using Implement.UnitOfWork;
 using Implement.ViewModels.Request;
 using Implement.ViewModels.Response;
 using Microsoft.EntityFrameworkCore;
@@ -11,13 +13,16 @@ namespace Implement.Services
     public class SettlementStatementService : ISettlementStatementService
     {
         private readonly IAwardSettlementRepository _awardSettlementRepository;
+        private readonly IUnitOfWork _unitOfWork;
         private readonly CasinoMassProgramDbContext _dbContext;
 
         public SettlementStatementService(IAwardSettlementRepository awardSettlementRepository,
-            CasinoMassProgramDbContext dbContext)
+            CasinoMassProgramDbContext dbContext,
+            IUnitOfWork unitOfWork)
         {
             _awardSettlementRepository = awardSettlementRepository;
             _dbContext = dbContext;
+            _unitOfWork = unitOfWork;
         }
 
         public async Task<List<SettlementStatementResponse>> SettlementStatementSearch(SettlementStatementRequest settlementStatementRequest)
@@ -41,13 +46,13 @@ namespace Implement.Services
             if (!string.IsNullOrEmpty(settlementStatementRequest.TeamRepresentativeId))
             {
                 string? seamRepresentativeId = settlementStatementRequest.TeamRepresentativeId?.Trim();
-                settlements = settlements.Where(x => x.TeamRepresentative?.ExternalId == seamRepresentativeId);
+                settlements = settlements.Where(x => x.TeamRepresentative?.TeamRepresentativeId == seamRepresentativeId);
             }
 
             if (!string.IsNullOrEmpty(settlementStatementRequest.TeamRepresentativeName))
             {
                 string? teamRepresentativeName = settlementStatementRequest.TeamRepresentativeName?.Trim();
-                settlements = settlements.Where(x => x.TeamRepresentative?.Name == teamRepresentativeName);
+                settlements = settlements.Where(x => x.TeamRepresentative?.TeamRepresentativeName == teamRepresentativeName);
 
             }
 
@@ -93,13 +98,13 @@ namespace Implement.Services
             if (!string.IsNullOrWhiteSpace(request.TeamRepresentativeId))
             {
                 var trId = request.TeamRepresentativeId.Trim();
-                query = query.Where(s => s.TeamRepresentative != null && s.TeamRepresentative.ExternalId == trId);
+                query = query.Where(s => s.TeamRepresentative != null && s.TeamRepresentative.TeamRepresentativeId == trId);
             }
 
             if (!string.IsNullOrWhiteSpace(request.TeamRepresentativeName))
             {
                 var trName = request.TeamRepresentativeName.Trim();
-                query = query.Where(s => s.TeamRepresentative != null && s.TeamRepresentative.Name == trName);
+                query = query.Where(s => s.TeamRepresentative != null && s.TeamRepresentative.TeamRepresentativeName == trName);
             }
 
             if (!string.IsNullOrWhiteSpace(request.ProgramName))
@@ -113,8 +118,8 @@ namespace Implement.Services
                 .GroupBy(s => new
                 {
                     s.MonthStart,
-                    ExternalId = s.TeamRepresentative!.ExternalId,
-                    Name = s.TeamRepresentative!.Name,
+                    ExternalId = s.TeamRepresentative!.TeamRepresentativeId,
+                    Name = s.TeamRepresentative!.TeamRepresentativeName,
                     Segment = s.TeamRepresentative!.Segment
                 })
                 .Select(g => new
@@ -133,7 +138,7 @@ namespace Implement.Services
                             p.MonthStart == g.Key.MonthStart &&
                             p.TeamRepresentativeId ==
                                 _dbContext.TeamRepresentatives
-                                    .Where(tr => tr.ExternalId == g.Key.ExternalId)
+                                    .Where(tr => tr.TeamRepresentativeId == g.Key.ExternalId)
                                     .Select(tr => tr.Id)
                                     .FirstOrDefault()
                         )
@@ -171,13 +176,13 @@ namespace Implement.Services
             var teamRepQuery = _dbContext.TeamRepresentatives.AsQueryable();
             if (!string.IsNullOrWhiteSpace(paymentTeam.TeamRepresentativeId))
             {
-                var extId = paymentTeam.TeamRepresentativeId.Trim();
-                teamRepQuery = teamRepQuery.Where(tr => tr.ExternalId == extId);
+                var teamRepresentativeId = paymentTeam.TeamRepresentativeId.Trim();
+                teamRepQuery = teamRepQuery.Where(tr => tr.TeamRepresentativeId == teamRepresentativeId);
             }
             else if (!string.IsNullOrWhiteSpace(paymentTeam.TeamRepresentativeName))
             {
                 var name = paymentTeam.TeamRepresentativeName.Trim();
-                teamRepQuery = teamRepQuery.Where(tr => tr.Name == name);
+                teamRepQuery = teamRepQuery.Where(tr => tr.TeamRepresentativeName == name);
             }
             else
             {
@@ -207,19 +212,19 @@ namespace Implement.Services
                 TeamRepresentativeId = teamRep.Id,
                 MonthStart = monthStart,
                 AwardTotal = awardTotal,
-                Status = "Inprocess",
+                Status = PaymentProcessEnum.Inprocess.ToString(),
                 CreatedAt = DateTime.UtcNow
             };
 
-            await _dbContext.PaymentTeamRepresentatives.AddAsync(payment);
-            await _dbContext.SaveChangesAsync();
+            await _unitOfWork.PaymentTeamRepresentative.AddAsync(payment);
+            await _unitOfWork.CompleteAsync();
 
             try
             {
-                payment.Status = "Void";
+                payment.Status = PaymentProcessEnum.Voided.ToString();
                 payment.UpdatedAt = DateTime.UtcNow;
-                _dbContext.PaymentTeamRepresentatives.Update(payment);
-                await _dbContext.SaveChangesAsync();
+                _unitOfWork.PaymentTeamRepresentative.Update(payment);
+                await _unitOfWork.CompleteAsync();
 
                 return new PaymentTeamRepresentativesResponse
                 {
@@ -228,10 +233,10 @@ namespace Implement.Services
             }
             catch
             {
-                payment.Status = "Falied";
+                payment.Status = PaymentProcessEnum.Falied.ToString();
                 payment.UpdatedAt = DateTime.UtcNow;
-                _dbContext.PaymentTeamRepresentatives.Update(payment);
-                await _dbContext.SaveChangesAsync();
+                _unitOfWork.PaymentTeamRepresentative.Update(payment);
+                await _unitOfWork.CompleteAsync();
 
                 return new PaymentTeamRepresentativesResponse
                 {
