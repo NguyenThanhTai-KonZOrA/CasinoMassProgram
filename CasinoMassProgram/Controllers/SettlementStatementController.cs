@@ -17,23 +17,43 @@ namespace CasinoMassProgram.Controllers
         [HttpPost("settlement-statement-search")]
         public async Task<IActionResult> SettlementStatementSearch(SettlementStatementRequest settlementStatementRequest)
         {
-            var results = await _statementService.SettlementStatementSearch(settlementStatementRequest);
-            return Ok(results);
+            try
+            {
+                var results = await _statementService.SettlementStatementSearch(settlementStatementRequest);
+                return Ok(results);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(ex.Message);
+            }
         }
 
         [HttpPost("list-teamRepresentatives")]
         public async Task<IActionResult> GetTeamRepresentatives(TeamRepresentativesRequest request)
         {
-            var response = await _statementService.GetTeamRepresentatives(request);
-            return Ok(response);
+            try
+            {
+                var response = await _statementService.GetTeamRepresentatives(request);
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(ex.Message);
+            }
         }
 
         [HttpPost("payment")]
         public async Task<IActionResult> PaymentTeamRepresentatives(PaymentTeamRepresentativesRequest paymentTeam)
         {
-            var response = await _statementService.PaymentTeamRepresentatives(paymentTeam);
-            return Ok(response);
+            try
+            {
+                var response = await _statementService.PaymentTeamRepresentatives(paymentTeam);
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(ex.Message);
+            }
         }
-
     }
 }

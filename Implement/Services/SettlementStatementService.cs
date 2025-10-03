@@ -113,7 +113,6 @@ namespace Implement.Services
                 query = query.Where(s => s.TeamRepresentative != null && s.TeamRepresentative.Segment == program);
             }
 
-            // Group by ExternalId + MonthStart (và các thuộc tính stable khác)
             var aggregates = await query
                 .GroupBy(s => new
                 {
@@ -132,7 +131,6 @@ namespace Implement.Services
                     Segment = g.Key.Segment,
                     CasinoWinLoss = g.Sum(x => x.CasinoWinLoss),
                     SettlementDoc = g.Max(x => x.SettlementDoc),
-                    // Lấy status: map ExternalId -> TeamRepresentative.Id rồi đối chiếu theo MonthStart
                     Status = _dbContext.PaymentTeamRepresentatives
                         .Where(p =>
                             p.MonthStart == g.Key.MonthStart &&
@@ -149,7 +147,6 @@ namespace Implement.Services
                 .ThenBy(x => x.TeamRepresentativeName)
                 .ToListAsync();
 
-            // Chuyển DateOnly -> DateTime sau khi materialize
             var result = aggregates.Select(x => new TeamRepresentativesResponse
             {
                 Segment = x.Segment,

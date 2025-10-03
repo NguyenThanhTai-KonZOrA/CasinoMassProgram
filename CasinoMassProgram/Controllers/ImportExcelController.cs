@@ -1,6 +1,5 @@
 using Implement.Services.Interface;
 using Implement.ViewModels.Request;
-using Implement.ViewModels.Response;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CasinoMassProgram.Controllers;
@@ -10,7 +9,6 @@ namespace CasinoMassProgram.Controllers;
 public class ImportExcelController : ControllerBase
 {
     private readonly IExcelService _excelService;
-
     public ImportExcelController(IExcelService excelService)
     {
         _excelService = excelService;
@@ -50,6 +48,7 @@ public class ImportExcelController : ControllerBase
     }
 
     [HttpGet("{batchId:guid}/annotated")]
+    [Produces("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
     public async Task<IActionResult> DownloadAnnotated([FromRoute] Guid batchId)
     {
         try
@@ -66,29 +65,59 @@ public class ImportExcelController : ControllerBase
     [HttpPost("approve/{batchId}")]
     public async Task<IActionResult> Approve([FromRoute] Guid batchId)
     {
-        var result = await _excelService.ApprovedImport(batchId);
-        return Ok(result);
+        try
+        {
+            var result = await _excelService.ApprovedImport(batchId);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
     }
 
     [HttpGet("{batchId:guid}/details")]
     public async Task<IActionResult> GetDetails([FromRoute] Guid batchId)
     {
-        var details = await _excelService.GetBatchDetailsAsync(batchId);
-        return Ok(details);
+        try
+        {
+            var details = await _excelService.GetBatchDetailsAsync(batchId);
+            return Ok(details);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 
     [HttpGet("{batchId:guid}/details-paging")]
     public async Task<IActionResult> GetDetails([FromRoute] Guid batchId, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
-        var details = await _excelService.GetBatchDetailsPagingAsync(batchId, page, pageSize);
-        return Ok(details);
+        try
+        {
+            var details = await _excelService.GetBatchDetailsPagingAsync(batchId, page, pageSize);
+            return Ok(details);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
     }
 
     [HttpPost("crp-settlement")]
     [Produces("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
     public async Task<IActionResult> CreateCrpSettlement([FromBody] GenerateCrpReportRequest crpReportRequest)
     {
-        var result = await _excelService.GenerateSettlementPaymentReportAsync(crpReportRequest);
-        return File(result.Content, result.ContentType, result.FileName);
+        try
+        {
+            var result = await _excelService.GenerateSettlementPaymentReportAsync(crpReportRequest);
+            return File(result.Content, result.ContentType, result.FileName);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 }
