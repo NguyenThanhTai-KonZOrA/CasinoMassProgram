@@ -12,6 +12,10 @@ public class ImportRow
     public bool IsValid { get; set; }
 
     public string RawJson { get; set; } = "{}";
+    public bool IsActive { get; set; } = true;
+    public bool IsDelete { get; set; } = false;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.Now;
 
     public ICollection<ImportCellError> Errors { get; set; } = new List<ImportCellError>();
 

@@ -11,4 +11,8 @@ public class Member
     public string? Tier { get; set; }
     public int Points { get; set; }
     public DateOnly? DateOfBirth { get; set; }
+    public bool IsActive { get; set; } = true;
+    public bool IsDelete { get; set; } = false;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.Now;
 }

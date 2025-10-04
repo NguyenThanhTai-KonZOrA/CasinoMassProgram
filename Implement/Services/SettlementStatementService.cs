@@ -158,7 +158,7 @@ namespace Implement.Services
                 Month = x.MonthStart.ToDateTime(TimeOnly.MinValue),
                 AwardTotal = x.AwardTotal,
                 Status = x.Status ?? string.Empty,
-                IsPayment = string.Equals(x.Status, "Void", StringComparison.OrdinalIgnoreCase)
+                IsPayment = string.Equals(x.Status, PaymentProcessEnum.Voided.ToString(), StringComparison.OrdinalIgnoreCase)
             }).ToList();
 
             return result;
@@ -193,7 +193,7 @@ namespace Implement.Services
             var monthStart = new DateOnly(month.Year, month.Month, 1);
 
             var existed = await _dbContext.PaymentTeamRepresentatives
-                .AnyAsync(p => p.TeamRepresentativeId == teamRep.Id && p.MonthStart == monthStart && p.Status == "Void");
+                .AnyAsync(p => p.TeamRepresentativeId == teamRep.Id && p.MonthStart == monthStart && p.Status == PaymentProcessEnum.Voided.ToString());
             if (existed)
             {
                 return new PaymentTeamRepresentativesResponse { IsPayment = false };
