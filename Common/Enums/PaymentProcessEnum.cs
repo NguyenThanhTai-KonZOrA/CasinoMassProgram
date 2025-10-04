@@ -6,6 +6,8 @@ namespace Common.Enums
     {
         [Description("Inprocess")]
         Inprocess,
+        [Description("Paid")]
+        Paid,
         [Description("Voided")]
         Voided,
         [Description("Falied")]

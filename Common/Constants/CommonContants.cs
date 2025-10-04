@@ -1,6 +1,14 @@
 ﻿namespace Common.Constants
 {
-    internal class CommonContants
+    public class CommonContants
     {
+        public const string DateFormat = "yyyy-MM-dd";
+        public const string DateTimeFormat = "yyyy-MM-dd HH:mm:ss";
+        public const string MonthFormat = "yyyy-MM";
+        public const string SystemUser = "System";
+        public const string AdminRole = "Admin";
+        public const string UserRole = "User";
+        public const string TeamLeaderRole = "TeamLeader";
+        public const string TeamRepresentativeRole = "TeamRepresentative";
     }
 }

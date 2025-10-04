@@ -6,7 +6,7 @@ namespace CasinoMassProgram.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
-public class ImportExcelController : ControllerBase
+public class ImportExcelController : BaseApiController
 {
     private readonly IExcelService _excelService;
     public ImportExcelController(IExcelService excelService)
@@ -29,7 +29,7 @@ public class ImportExcelController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(ex.Message);
+            throw new BadHttpRequestException(ex.Message);
         }
     }
 
@@ -43,7 +43,7 @@ public class ImportExcelController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(ex.Message);
+            throw new BadHttpRequestException(ex.Message);
         }
     }
 
@@ -58,7 +58,7 @@ public class ImportExcelController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(ex.Message);
+            throw new BadHttpRequestException(ex.Message);
         }
     }
 
@@ -72,7 +72,7 @@ public class ImportExcelController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(ex.Message);
+            throw new BadHttpRequestException(ex.Message);
         }
 
     }
@@ -87,7 +87,7 @@ public class ImportExcelController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(ex.Message);
+            throw new BadHttpRequestException(ex.Message);
         }
     }
 
@@ -101,7 +101,7 @@ public class ImportExcelController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(ex.Message);
+            throw new BadHttpRequestException(ex.Message);
         }
 
     }
@@ -117,7 +117,7 @@ public class ImportExcelController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(ex.Message);
+            throw new BadHttpRequestException(ex.Message);
         }
     }
 }

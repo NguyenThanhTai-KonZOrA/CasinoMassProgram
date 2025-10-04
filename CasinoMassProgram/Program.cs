@@ -1,3 +1,4 @@
+using Common.CurrentUserLogin;
 using Common.SystemConfiguration;
 using Implement.ApplicationDbContext;
 using Implement.Repositories;
@@ -22,9 +23,10 @@ builder.Services.AddDbContext<CasinoMassProgramDbContext>(options =>
         options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 #region Add Services
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<ISystemConfiguration, SystemConfiguration>();
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
-
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 builder.Services.AddTransient<IExcelService, ExcelService>();
 builder.Services.AddTransient<IAwardSettlementRepository, AwardSettlementRepository>();
 builder.Services.AddTransient<ITeamRepresentativeMemberRepository, TeamRepresentativeMemberRepository>();

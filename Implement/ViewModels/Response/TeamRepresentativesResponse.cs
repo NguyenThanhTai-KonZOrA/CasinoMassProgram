@@ -5,6 +5,7 @@
         public string Segment { get; set; }
         public string TeamRepresentativeName { get; set; }
         public string TeamRepresentativeId { get; set; }
+        public Guid PaymentTeamRepresentativesId { get; set; }
         public string SettlementDoc { get; set; }
         public string ProgramName { get; set; }
         public DateTime Month { get; set; }

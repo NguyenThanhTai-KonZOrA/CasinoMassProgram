@@ -9,6 +9,8 @@ namespace Implement.Services.Interface
 
         Task<List<TeamRepresentativesResponse>> GetTeamRepresentatives(TeamRepresentativesRequest request);
 
-        Task<PaymentTeamRepresentativesResponse> PaymentTeamRepresentatives(PaymentTeamRepresentativesRequest paymentTeam);
+        Task<PaymentTeamRepresentativesResponse> PaymentTeamRepresentatives(PaymentTeamRepresentativesRequest paymentTeam, string currentUserName);
+
+        Task<UnPaidTeamRepresentativesResponse> UnPaidTeamRepresentatives(UnPaidTeamRepresentativesRequest unPaidTeam, string currentUserName);
     }
 }

@@ -27,7 +27,6 @@ public class ExcelService : IExcelService
     private readonly ITeamRepresentativeMemberRepository _teamRepresentativeMemberRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IHostingEnvironment _hostingEnvironment;
-
     public ExcelService(
         ILogger<ExcelService> logger,
         IImportBatchRepository importBatchRepository,
@@ -339,6 +338,8 @@ public class ExcelService : IExcelService
             batch.Rows = rows.ToList();
         }
 
+        if (string.Equals(batch.Status, ExcelProcessEnum.Approved.ToString(), StringComparison.OrdinalIgnoreCase))
+            throw new Exception("This batch have been 'Approved'.");
         if (!string.Equals(batch.Status, "Validated", StringComparison.OrdinalIgnoreCase))
             throw new Exception("Batch must be in 'Validated' status.");
 
@@ -524,10 +525,9 @@ public class ExcelService : IExcelService
 
         var monthStart = new DateOnly(generateCrpReport.Month.Year, generateCrpReport.Month.Month, 1);
 
-        // Resolve TeamRepresentative by ExternalId or Guid
         var allReps = await _teamRepresentativeRepository.GetAllAsync();
         var rep = allReps.FirstOrDefault(r =>
-            string.Equals(r.TeamRepresentativeId, generateCrpReport.TeamRepresentativeId, StringComparison.OrdinalIgnoreCase))
+                string.Equals(r.TeamRepresentativeId, generateCrpReport.TeamRepresentativeId, StringComparison.OrdinalIgnoreCase))
             ?? (Guid.TryParse(generateCrpReport.TeamRepresentativeId, out var repGuid)
                 ? allReps.FirstOrDefault(r => r.Id == repGuid)
                 : null);
@@ -535,32 +535,32 @@ public class ExcelService : IExcelService
         if (rep is null)
             throw new InvalidOperationException($"TeamRepresentative '{generateCrpReport.TeamRepresentativeId}' not found.");
 
-        // Load settlements for this TR and month, include Member for export
         var settlements = await _awardSettlementRepository.FindAsync(
             s => s.TeamRepresentativeId == rep.Id && s.MonthStart == monthStart,
             s => s.Member!,
             s => s.TeamRepresentative!
         );
 
-        // Try get AwardTotal from PaymentTeamRepresentatives
         var payments = await _unitOfWork.PaymentTeamRepresentative.GetAllNoTrackingAsync();
         var payment = payments.FirstOrDefault(p => p.TeamRepresentativeId == rep.Id && p.MonthStart == monthStart);
         var awardTotal = payment?.AwardTotal ?? settlements.Sum(s => s.AwardSettlementAmount);
 
-        // Path to template
         var templatePath = Path.Combine(_hostingEnvironment.ContentRootPath, "Resources", "CRP Settlement Sample.xlsx");
         if (!File.Exists(templatePath))
             throw new FileNotFoundException("Template not found. Ensure it’s copied to output: Resources/CRP Settlement Sample.xlsx", templatePath);
 
         using var wb = new XLWorkbook(templatePath);
         var ws = wb.Worksheets.FirstOrDefault() ?? throw new InvalidOperationException("Template has no worksheets.");
+
+        ws.Cell("C4").Value = settlements.FirstOrDefault()?.SettlementDoc;
         ws.Cell("E6").Value = rep.TeamRepresentativeName;
         ws.Cell("E7").Value = rep.TeamRepresentativeId;
         ws.Cell("E9").Value = monthStart.ToDateTime(TimeOnly.MinValue);
+
         var neededHeaders = new[]
         {
-        "No.", "Member ID", "Member name", "Joined date", "Last gaming date", "Eligible (Y/N)", "Casino win/(loss)"
-    };
+            "No.", "Member ID", "Member name", "Joined date", "Last gaming date", "Eligible (Y/N)", "Casino win/(loss)"
+        };
 
         int headerRow = 1;
         Dictionary<string, int> headerCols = new(StringComparer.OrdinalIgnoreCase);
@@ -594,6 +594,7 @@ public class ExcelService : IExcelService
             var cell = ws.CellsUsed(c => string.Equals(c.GetString().Trim(), headerText, StringComparison.OrdinalIgnoreCase)).FirstOrDefault();
             if (cell != null) cell.CellRight().Value = value;
         }
+
         TrySet("Team Representative", $"{rep.TeamRepresentativeName} ({rep.TeamRepresentativeId})");
         TrySet("Month", $"{monthStart:yyyy-MM}");
 
@@ -607,37 +608,30 @@ public class ExcelService : IExcelService
         var row = firstDataRow;
         foreach (var (s, no) in settlements.Select((s, i) => (s, i + 1)))
         {
-            var memberId = s.Member?.MemberCode ?? string.Empty;
-            var memberName = s.Member?.FullName ?? string.Empty;
-            var joined = s.JoinedDate.ToDateTime(TimeOnly.MinValue);
-            var lastGaming = s.LastGamingDate.ToDateTime(TimeOnly.MinValue);
-            var eligible = s.Eligible ? "Y" : "N";
-            var winLoss = s.CasinoWinLoss;
-
             ws.Cell(row, idx("No.")).Value = no;
-            ws.Cell(row, idx("Member ID")).Value = memberId;
-            ws.Cell(row, idx("Member name")).Value = memberName;
+            ws.Cell(row, idx("Member ID")).Value = s.Member?.MemberCode ?? string.Empty;
+            ws.Cell(row, idx("Member name")).Value = s.Member?.FullName ?? string.Empty;
 
-            ws.Cell(row, idx("Joined date")).Value = joined;
+            ws.Cell(row, idx("Joined date")).Value = s.JoinedDate.ToDateTime(TimeOnly.MinValue);
             ws.Cell(row, idx("Joined date")).Style.DateFormat.Format = "dd/MM/yyyy";
 
-            ws.Cell(row, idx("Last gaming date")).Value = lastGaming;
+            ws.Cell(row, idx("Last gaming date")).Value = s.LastGamingDate.ToDateTime(TimeOnly.MinValue);
             ws.Cell(row, idx("Last gaming date")).Style.DateFormat.Format = "dd/MM/yyyy";
 
-            ws.Cell(row, idx("Eligible (Y/N)")).Value = eligible;
+            ws.Cell(row, idx("Eligible (Y/N)")).Value = s.Eligible ? "Y" : "N";
 
-            ws.Cell(row, idx("Casino win/(loss)")).Value = (double)winLoss;
+            ws.Cell(row, idx("Casino win/(loss)")).Value = (double)s.CasinoWinLoss;
             ws.Cell(row, idx("Casino win/(loss)")).Style.NumberFormat.Format = "#,##0.00;(#,##0.00)";
 
             row++;
         }
 
-        var labelCol = headerCols.ContainsKey("Member name") ? idx("Member name") : idx("Member ID");
+        var labelCol = headerCols.ContainsKey("Eligible (Y/N)") ? idx("Eligible (Y/N)") : idx("Last gaming date");
         var numberCol = idx("Casino win/(loss)");
-
         var totalWinLoss = settlements.Sum(s => s.CasinoWinLoss);
 
-        ws.Cell(row, labelCol).Value = "Tổng/Total:";
+        int totalRow = row;
+        ws.Cell(row, labelCol).Value = "Total:";
         ws.Cell(row, labelCol).Style.Font.Bold = true;
 
         ws.Cell(row, numberCol).Value = (double)totalWinLoss;
@@ -645,14 +639,53 @@ public class ExcelService : IExcelService
         ws.Cell(row, numberCol).Style.Font.Bold = true;
 
         ws.Row(row).Style.Border.TopBorder = XLBorderStyleValues.Thin;
+
         row++;
 
-        ws.Cell(row, labelCol).Value = "Chi trả thưởng/Award settlement:";
+        int awardRow = row;
+        ws.Cell(row, labelCol).Value = "Award settlement:";
         ws.Cell(row, labelCol).Style.Font.Bold = true;
 
         ws.Cell(row, numberCol).Value = (double)awardTotal;
         ws.Cell(row, numberCol).Style.NumberFormat.Format = "#,##0.00;(#,##0.00)";
         ws.Cell(row, numberCol).Style.Font.Bold = true;
+
+        // Draw full border (header + data + summary)
+        var minCol = neededHeaders.Min(h => idx(h));
+        var maxCol = neededHeaders.Max(h => idx(h));
+        var tableRange = ws.Range(headerRow, minCol, awardRow, maxCol);
+        tableRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        tableRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+
+        // Leave 4 blank rows then signature headers
+        int signatureHeaderRow = awardRow + 5; // 4 blank rows after award row
+        int signatureValueRow = signatureHeaderRow + 5; // 4 blank rows for signing before values
+        var labelColSign = headerCols.ContainsKey("Member ID") ? idx("Member ID") : idx("Member name");
+        // Choose three columns for signatures (left, middle, right)
+        int paidCol = labelColSign;
+        int confirmCol = (minCol + maxCol) / 2;
+        int receivedCol = maxCol;
+
+        ws.Cell(signatureHeaderRow, paidCol).Value = "Paid by";
+        ws.Cell(signatureHeaderRow, confirmCol).Value = "Confirmed by";
+        ws.Cell(signatureHeaderRow, receivedCol).Value = "Received by";
+
+        ws.Range(signatureHeaderRow, paidCol, signatureHeaderRow, receivedCol).Style
+            .Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
+
+        // Values after 4 more rows
+        ws.Cell(signatureValueRow, paidCol).Value = "Cage";
+        ws.Cell(signatureValueRow, confirmCol).Value = "Casino Marketting";
+        ws.Cell(signatureValueRow, receivedCol).Value = "0";
+
+        ws.Range(signatureValueRow, paidCol, signatureValueRow, receivedCol).Style
+            .Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center)
+            .Font.SetBold();
+
+        // Optional signature line (bottom border) above the values
+        ws.Cell(signatureValueRow - 1, paidCol).Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+        ws.Cell(signatureValueRow - 1, confirmCol).Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+        ws.Cell(signatureValueRow - 1, receivedCol).Style.Border.BottomBorder = XLBorderStyleValues.Thin;
 
         ws.Columns().AdjustToContents();
 
@@ -662,6 +695,7 @@ public class ExcelService : IExcelService
         var fileName = $"CRP_Settlement_{rep.TeamRepresentativeId}_{monthStart:yyyyMM}.xlsx";
         return (ms.ToArray(), fileName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     }
+
     public async Task<List<ImportBatch>> ListBatchesAsync()
     {
         var batch = await _importBatchRepository.GetAllNoTrackingAsync();

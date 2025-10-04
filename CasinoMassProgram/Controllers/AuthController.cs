@@ -26,6 +26,7 @@ namespace CasinoMassProgram.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> Login(LoginRequest loginRequest)
         {
+            return Ok(new LoginResponse { Token = "loginRequest", UserName = "loginRequest" });
             try
             {
                 var result = WindowsAuthHelper.WindowsAccount(loginRequest.Username, loginRequest.Password);

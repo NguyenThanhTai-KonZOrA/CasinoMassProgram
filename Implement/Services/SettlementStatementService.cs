@@ -1,4 +1,5 @@
-﻿using Common.Enums;
+﻿using Common.Constants;
+using Common.Enums;
 using Implement.ApplicationDbContext;
 using Implement.EntityModels;
 using Implement.Repositories.Interface;
@@ -15,14 +16,17 @@ namespace Implement.Services
         private readonly IAwardSettlementRepository _awardSettlementRepository;
         private readonly IUnitOfWork _unitOfWork;
         private readonly CasinoMassProgramDbContext _dbContext;
+        private readonly IPaymentTeamRepresentativeRepository _paymentTeamRepresentativeRepository;
 
         public SettlementStatementService(IAwardSettlementRepository awardSettlementRepository,
             CasinoMassProgramDbContext dbContext,
-            IUnitOfWork unitOfWork)
+            IUnitOfWork unitOfWork,
+            IPaymentTeamRepresentativeRepository paymentTeamRepresentativeRepository)
         {
             _awardSettlementRepository = awardSettlementRepository;
             _dbContext = dbContext;
             _unitOfWork = unitOfWork;
+            _paymentTeamRepresentativeRepository = paymentTeamRepresentativeRepository;
         }
 
         public async Task<List<SettlementStatementResponse>> SettlementStatementSearch(SettlementStatementRequest settlementStatementRequest)
@@ -117,7 +121,7 @@ namespace Implement.Services
                 .GroupBy(s => new
                 {
                     s.MonthStart,
-                    ExternalId = s.TeamRepresentative!.TeamRepresentativeId,
+                    TeamRepresentativeId = s.TeamRepresentative!.TeamRepresentativeId,
                     Name = s.TeamRepresentative!.TeamRepresentativeName,
                     Segment = s.TeamRepresentative!.Segment
                 })
@@ -125,22 +129,22 @@ namespace Implement.Services
                 {
                     g.Key.MonthStart,
                     TeamRepresentativeName = g.Key.Name,
-                    TeamRepresentativeExternalId = g.Key.ExternalId,
+                    TeamRepresentativeId = g.Key.TeamRepresentativeId,
                     ProgramName = g.Key.Segment,
                     AwardTotal = g.Sum(x => x.AwardSettlementAmount),
                     Segment = g.Key.Segment,
                     CasinoWinLoss = g.Sum(x => x.CasinoWinLoss),
                     SettlementDoc = g.Max(x => x.SettlementDoc),
-                    Status = _dbContext.PaymentTeamRepresentatives
+                    PaymentTeamRepresentatives = _dbContext.PaymentTeamRepresentatives
                         .Where(p =>
                             p.MonthStart == g.Key.MonthStart &&
                             p.TeamRepresentativeId ==
                                 _dbContext.TeamRepresentatives
-                                    .Where(tr => tr.TeamRepresentativeId == g.Key.ExternalId)
+                                    .Where(tr => tr.TeamRepresentativeId == g.Key.TeamRepresentativeId)
                                     .Select(tr => tr.Id)
                                     .FirstOrDefault()
                         )
-                        .Select(p => p.Status)
+                        .Select(p => new { p.Status, p.Id })
                         .FirstOrDefault()
                 })
                 .OrderByDescending(x => x.MonthStart)
@@ -153,23 +157,23 @@ namespace Implement.Services
                 CasinoWinLoss = x.CasinoWinLoss,
                 SettlementDoc = x.SettlementDoc,
                 TeamRepresentativeName = x.TeamRepresentativeName ?? string.Empty,
-                TeamRepresentativeId = x.TeamRepresentativeExternalId ?? string.Empty,
+                TeamRepresentativeId = x.TeamRepresentativeId ?? string.Empty,
                 ProgramName = x.ProgramName ?? string.Empty,
                 Month = x.MonthStart.ToDateTime(TimeOnly.MinValue),
                 AwardTotal = x.AwardTotal,
-                Status = x.Status ?? string.Empty,
-                IsPayment = string.Equals(x.Status, PaymentProcessEnum.Voided.ToString(), StringComparison.OrdinalIgnoreCase)
+                Status = x.PaymentTeamRepresentatives?.Status ?? string.Empty,
+                PaymentTeamRepresentativesId = x.PaymentTeamRepresentatives != null ? x.PaymentTeamRepresentatives.Id : Guid.Empty,
+                IsPayment = string.Equals(x.PaymentTeamRepresentatives?.Status, PaymentProcessEnum.Paid.ToString(), StringComparison.OrdinalIgnoreCase)
             }).ToList();
 
             return result;
         }
 
-        public async Task<PaymentTeamRepresentativesResponse> PaymentTeamRepresentatives(PaymentTeamRepresentativesRequest paymentTeam)
+        public async Task<PaymentTeamRepresentativesResponse> PaymentTeamRepresentatives(PaymentTeamRepresentativesRequest paymentTeam, string userName)
         {
             if (paymentTeam == null) throw new ArgumentNullException(nameof(paymentTeam));
             if (!paymentTeam.Month.HasValue) throw new ArgumentException("Month is required.", nameof(paymentTeam.Month));
 
-            // Resolve TeamRepresentative by ExternalId (preferred) or by Name
             var teamRepQuery = _dbContext.TeamRepresentatives.AsQueryable();
             if (!string.IsNullOrWhiteSpace(paymentTeam.TeamRepresentativeId))
             {
@@ -187,38 +191,55 @@ namespace Implement.Services
             }
 
             var teamRep = await teamRepQuery.FirstOrDefaultAsync();
-            if (teamRep == null) throw new InvalidOperationException("TeamRepresentative not found.");
+            if (teamRep == null) throw new ArgumentException("TeamRepresentative not found.");
 
             var month = paymentTeam.Month.Value;
             var monthStart = new DateOnly(month.Year, month.Month, 1);
 
-            var existed = await _dbContext.PaymentTeamRepresentatives
-                .AnyAsync(p => p.TeamRepresentativeId == teamRep.Id && p.MonthStart == monthStart && p.Status == PaymentProcessEnum.Voided.ToString());
-            if (existed)
+            var queryPaid = _dbContext.PaymentTeamRepresentatives.Where(p => p.TeamRepresentativeId == teamRep.Id && p.MonthStart == monthStart);
+            var existedPaid = await queryPaid.AnyAsync(x => x.Status == PaymentProcessEnum.Paid.ToString());
+            if (existedPaid)
             {
                 return new PaymentTeamRepresentativesResponse { IsPayment = false };
             }
 
-            var awardTotal = await _dbContext.AwardSettlements
+            var casinoWinLoss = await _dbContext.AwardSettlements
                 .Where(s => s.TeamRepresentativeId == teamRep.Id && s.MonthStart == monthStart)
-                .SumAsync(s => (decimal?)s.AwardSettlementAmount) ?? 0m;
+                .SumAsync(s => (decimal?)s.CasinoWinLoss) ?? 0m;
+            var awardTotal = CalculateAwardTotal(casinoWinLoss);
 
-            var payment = new PaymentTeamRepresentative
+            var existedVoided = await queryPaid.FirstOrDefaultAsync(x => x.Status == PaymentProcessEnum.Voided.ToString());
+
+            PaymentTeamRepresentative payment = new();
+
+            if (existedVoided != null)
             {
-                Id = Guid.NewGuid(),
-                TeamRepresentativeId = teamRep.Id,
-                MonthStart = monthStart,
-                AwardTotal = awardTotal,
-                Status = PaymentProcessEnum.Inprocess.ToString(),
-                CreatedAt = DateTime.UtcNow
-            };
+                payment = existedVoided;
+                payment.Status = PaymentProcessEnum.Inprocess.ToString();
+                payment.UpdatedBy = userName ?? CommonContants.SystemUser;
+                _unitOfWork.PaymentTeamRepresentative.Update(payment);
+            }
+            else
+            {
+                payment = new PaymentTeamRepresentative
+                {
+                    Id = Guid.NewGuid(),
+                    TeamRepresentativeId = teamRep.Id,
+                    MonthStart = monthStart,
+                    AwardTotal = awardTotal,
+                    Status = PaymentProcessEnum.Inprocess.ToString(),
+                    CreatedAt = DateTime.UtcNow,
+                    CreatedBy = userName ?? CommonContants.SystemUser,
+                    UpdatedBy = userName ?? CommonContants.SystemUser,
+                };
+                await _unitOfWork.PaymentTeamRepresentative.AddAsync(payment);
+            }
 
-            await _unitOfWork.PaymentTeamRepresentative.AddAsync(payment);
             await _unitOfWork.CompleteAsync();
 
             try
             {
-                payment.Status = PaymentProcessEnum.Voided.ToString();
+                payment.Status = PaymentProcessEnum.Paid.ToString();
                 payment.UpdatedAt = DateTime.UtcNow;
                 _unitOfWork.PaymentTeamRepresentative.Update(payment);
                 await _unitOfWork.CompleteAsync();
@@ -239,6 +260,45 @@ namespace Implement.Services
                 {
                     IsPayment = false
                 };
+            }
+        }
+
+        public async Task<UnPaidTeamRepresentativesResponse> UnPaidTeamRepresentatives(UnPaidTeamRepresentativesRequest unPaidTeam, string currentUserName)
+        {
+            var payment = await _paymentTeamRepresentativeRepository.FirstOrDefaultAsync(p => p.Id == unPaidTeam.PaymentTeamRepresentativesId && p.Status == PaymentProcessEnum.Paid.ToString());
+
+            if (payment == null)
+            {
+                return new UnPaidTeamRepresentativesResponse { IsUnPaid = false };
+            }
+
+            payment.Status = PaymentProcessEnum.Voided.ToString();
+            payment.UpdatedAt = DateTime.UtcNow;
+            payment.UpdatedBy = currentUserName ?? CommonContants.SystemUser;
+            _unitOfWork.PaymentTeamRepresentative.Update(payment);
+            await _unitOfWork.CompleteAsync();
+
+            return new UnPaidTeamRepresentativesResponse { IsUnPaid = true };
+        }
+
+
+        private decimal CalculateAwardTotal(decimal casinoWinLoss)
+        {
+            if (casinoWinLoss >= 90000m)
+            {
+                return casinoWinLoss * 0.12m;
+            }
+            else if (casinoWinLoss >= 3000m)
+            {
+                return casinoWinLoss * 0.010m;
+            }
+            else if (casinoWinLoss >= 1000m)
+            {
+                return casinoWinLoss * 0.05m;
+            }
+            else
+            {
+                return 0m;
             }
         }
     }

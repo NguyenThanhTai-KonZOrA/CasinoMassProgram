@@ -1,4 +1,5 @@
-﻿using Implement.Services.Interface;
+﻿using Common.CurrentUserLogin;
+using Implement.Services.Interface;
 using Implement.ViewModels.Request;
 using Microsoft.AspNetCore.Mvc;
 
@@ -6,12 +7,14 @@ namespace CasinoMassProgram.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    public class SettlementStatementController : ControllerBase
+    public class SettlementStatementController : BaseApiController
     {
         private readonly ISettlementStatementService _statementService;
-        public SettlementStatementController(ISettlementStatementService statementService)
+        private readonly ICurrentUserService _currentUser;
+        public SettlementStatementController(ISettlementStatementService statementService, ICurrentUserService currentUser)
         {
             _statementService = statementService;
+            _currentUser = currentUser;
         }
 
         [HttpPost("settlement-statement-search")]
@@ -24,7 +27,7 @@ namespace CasinoMassProgram.Controllers
             }
             catch (Exception ex)
             {
-                return BadRequest(ex.Message);
+                throw new BadHttpRequestException(ex.Message);
             }
         }
 
@@ -38,7 +41,7 @@ namespace CasinoMassProgram.Controllers
             }
             catch (Exception ex)
             {
-                return BadRequest(ex.Message);
+                throw new BadHttpRequestException(ex.Message);
             }
         }
 
@@ -47,12 +50,26 @@ namespace CasinoMassProgram.Controllers
         {
             try
             {
-                var response = await _statementService.PaymentTeamRepresentatives(paymentTeam);
+                var response = await _statementService.PaymentTeamRepresentatives(paymentTeam, _currentUser.UserName);
                 return Ok(response);
             }
             catch (Exception ex)
             {
-                return BadRequest(ex.Message);
+                throw new BadHttpRequestException(ex.Message);
+            }
+        }
+
+        [HttpPost("unPaid")]
+        public async Task<IActionResult> UnPaidTeamRepresentatives(UnPaidTeamRepresentativesRequest unPaidTeam)
+        {
+            try
+            {
+                var response = await _statementService.UnPaidTeamRepresentatives(unPaidTeam, _currentUser.UserName);
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                throw new BadHttpRequestException(ex.Message);
             }
         }
     }

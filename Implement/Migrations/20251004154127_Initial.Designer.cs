@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Implement.Migrations
 {
     [DbContext(typeof(CasinoMassProgramDbContext))]
-    [Migration("20251004013422_Initial")]
+    [Migration("20251004154127_Initial")]
     partial class Initial
     {
         /// <inheritdoc />
@@ -265,6 +265,10 @@ namespace Implement.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
@@ -284,6 +288,10 @@ namespace Implement.Migrations
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
