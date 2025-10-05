@@ -1,4 +1,4 @@
-using Implement.EntityModels;
+﻿using Implement.EntityModels;
 using Microsoft.EntityFrameworkCore;
 
 namespace Implement.ApplicationDbContext;
@@ -14,7 +14,7 @@ public class CasinoMassProgramDbContext : DbContext
     public DbSet<AwardSettlement> AwardSettlements { get; set; }
     public DbSet<TeamRepresentative> TeamRepresentatives { get; set; }
     public DbSet<TeamRepresentativeMember> TeamRepresentativeMembers { get; set; }
-
+    public DbSet<PaymentTeamRepresentative> PaymentTeamRepresentatives { get; set; }
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // Import tracking
@@ -37,7 +37,7 @@ public class CasinoMassProgramDbContext : DbContext
 
         // TeamRepresentative uniqueness by external ID
         modelBuilder.Entity<TeamRepresentative>()
-            .HasIndex(tr => tr.ExternalId)
+            .HasIndex(tr => tr.TeamRepresentativeId)
             .IsUnique();
 
         // Join table composite PK and relationships
@@ -64,5 +64,21 @@ public class CasinoMassProgramDbContext : DbContext
         modelBuilder.Entity<AwardSettlement>()
             .Property(a => a.AwardSettlementAmount)
             .HasColumnType("decimal(18,2)");
+
+        // PaymentTeamRepresentative config
+        modelBuilder.Entity<PaymentTeamRepresentative>()
+            .Property(p => p.AwardTotal)
+            .HasColumnType("decimal(18,2)");
+
+        modelBuilder.Entity<PaymentTeamRepresentative>()
+            .HasOne(p => p.TeamRepresentative)
+            .WithMany()
+            .HasForeignKey(p => p.TeamRepresentativeId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Ngăn record trùng theo (TeamRepresentative, MonthStart)
+        modelBuilder.Entity<PaymentTeamRepresentative>()
+            .HasIndex(p => new { p.TeamRepresentativeId, p.MonthStart })
+            .IsUnique();
     }
 }

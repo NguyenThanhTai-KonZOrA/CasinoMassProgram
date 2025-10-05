@@ -1,15 +1,14 @@
 using Implement.Services.Interface;
-using Implement.ViewModels.Response;
+using Implement.ViewModels.Request;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CasinoMassProgram.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
-public class ImportExcelController : ControllerBase
+public class ImportExcelController : BaseApiController
 {
     private readonly IExcelService _excelService;
-
     public ImportExcelController(IExcelService excelService)
     {
         _excelService = excelService;
@@ -30,7 +29,7 @@ public class ImportExcelController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(ex.Message);
+            throw new BadHttpRequestException(ex.Message);
         }
     }
 
@@ -44,11 +43,12 @@ public class ImportExcelController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(ex.Message);
+            throw new BadHttpRequestException(ex.Message);
         }
     }
 
     [HttpGet("{batchId:guid}/annotated")]
+    [Produces("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
     public async Task<IActionResult> DownloadAnnotated([FromRoute] Guid batchId)
     {
         try
@@ -58,30 +58,66 @@ public class ImportExcelController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(ex.Message);
+            throw new BadHttpRequestException(ex.Message);
         }
     }
 
     [HttpPost("approve/{batchId}")]
     public async Task<IActionResult> Approve([FromRoute] Guid batchId)
     {
-        var result = await _excelService.ApprovedImport(batchId);
-        return Ok(result);
+        try
+        {
+            var result = await _excelService.ApprovedImport(batchId);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            throw new BadHttpRequestException(ex.Message);
+        }
+
     }
 
     [HttpGet("{batchId:guid}/details")]
-    [ProducesResponseType(typeof(ImportDetailsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetDetails([FromRoute] Guid batchId)
     {
-        var details = await _excelService.GetBatchDetailsAsync(batchId);
-        return Ok(details);
+        try
+        {
+            var details = await _excelService.GetBatchDetailsAsync(batchId);
+            return Ok(details);
+        }
+        catch (Exception ex)
+        {
+            throw new BadHttpRequestException(ex.Message);
+        }
     }
 
     [HttpGet("{batchId:guid}/details-paging")]
-    [ProducesResponseType(typeof(ImportDetailsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetDetails([FromRoute] Guid batchId, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
-        var details = await _excelService.GetBatchDetailsPagingAsync(batchId, page, pageSize);
-        return Ok(details);
+        try
+        {
+            var details = await _excelService.GetBatchDetailsPagingAsync(batchId, page, pageSize);
+            return Ok(details);
+        }
+        catch (Exception ex)
+        {
+            throw new BadHttpRequestException(ex.Message);
+        }
+
+    }
+
+    [HttpPost("crp-settlement")]
+    [Produces("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
+    public async Task<IActionResult> CreateCrpSettlement([FromBody] GenerateCrpReportRequest crpReportRequest)
+    {
+        try
+        {
+            var result = await _excelService.GenerateSettlementPaymentReportAsync(crpReportRequest);
+            return File(result.Content, result.ContentType, result.FileName);
+        }
+        catch (Exception ex)
+        {
+            throw new BadHttpRequestException(ex.Message);
+        }
     }
 }

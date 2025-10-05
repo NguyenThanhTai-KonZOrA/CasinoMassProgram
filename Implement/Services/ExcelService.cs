@@ -1,9 +1,13 @@
-using ClosedXML.Excel;
+﻿using ClosedXML.Excel;
+using Common.Enums;
+using Common.Helper;
 using Implement.EntityModels;
 using Implement.Repositories.Interface;
 using Implement.Services.Interface;
 using Implement.UnitOfWork;
+using Implement.ViewModels.Request;
 using Implement.ViewModels.Response;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
@@ -23,6 +27,7 @@ public class ExcelService : IExcelService
     private readonly IMemberRepository _memberRepository;
     private readonly ITeamRepresentativeMemberRepository _teamRepresentativeMemberRepository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IHostingEnvironment _hostingEnvironment;
     public ExcelService(
         ILogger<ExcelService> logger,
         IImportBatchRepository importBatchRepository,
@@ -32,7 +37,7 @@ public class ExcelService : IExcelService
         ITeamRepresentativeRepository teamRepresentativeRepository,
         ITeamRepresentativeMemberRepository teamRepresentativeMemberRepository,
         IMemberRepository memberRepository,
-        IUnitOfWork unitOfWork
+        IUnitOfWork unitOfWork, IHostingEnvironment hostingEnvironment
     )
     {
         _logger = logger;
@@ -44,6 +49,7 @@ public class ExcelService : IExcelService
         _memberRepository = memberRepository;
         _teamRepresentativeMemberRepository = teamRepresentativeMemberRepository;
         _unitOfWork = unitOfWork;
+        _hostingEnvironment = hostingEnvironment;
     }
 
     // Expected headers (ALL required)
@@ -94,7 +100,7 @@ public class ExcelService : IExcelService
         {
             FileName = file.FileName,
             UploadedAt = DateTime.UtcNow,
-            Status = "Validated",
+            Status = ExcelProcessEnum.Validated.ToString(),
             FileContent = ms.ToArray()
         };
 
@@ -333,6 +339,8 @@ public class ExcelService : IExcelService
             batch.Rows = rows.ToList();
         }
 
+        if (string.Equals(batch.Status, ExcelProcessEnum.Approved.ToString(), StringComparison.OrdinalIgnoreCase))
+            throw new Exception("This batch have been 'Approved'.");
         if (!string.Equals(batch.Status, "Validated", StringComparison.OrdinalIgnoreCase))
             throw new Exception("Batch must be in 'Validated' status.");
 
@@ -343,7 +351,7 @@ public class ExcelService : IExcelService
 
         // Preload existing reps and members to reduce DB round-trips
         var existingReps = await _teamRepresentativeRepository.GetAllAsync();
-        foreach (var r in existingReps) upsertedReps[r.ExternalId] = r;
+        foreach (var r in existingReps) upsertedReps[r.TeamRepresentativeId] = r;
 
         var existingMembers = await _memberRepository.GetAllAsync();
         foreach (var m in existingMembers) upsertedMembers[m.MemberCode] = m;
@@ -368,8 +376,8 @@ public class ExcelService : IExcelService
             {
                 rep = new TeamRepresentative
                 {
-                    ExternalId = repExternalId,
-                    Name = Get("Team Representative"),
+                    TeamRepresentativeId = repExternalId,
+                    TeamRepresentativeName = Get("Team Representative"),
                     Segment = Get("SEGMENT")
                 };
                 await _teamRepresentativeRepository.AddAsync(rep);
@@ -378,7 +386,7 @@ public class ExcelService : IExcelService
             else
             {
                 // Keep existing values; if empty, fill from current row
-                if (string.IsNullOrWhiteSpace(rep.Name)) rep.Name = Get("Team Representative");
+                if (string.IsNullOrWhiteSpace(rep.TeamRepresentativeName)) rep.TeamRepresentativeName = Get("Team Representative");
                 if (string.IsNullOrWhiteSpace(rep.Segment)) rep.Segment = Get("SEGMENT");
             }
 
@@ -404,11 +412,13 @@ public class ExcelService : IExcelService
             trmPairs.Add((rep.Id, member.Id));
 
             // Per-row settlement
+            var monthStartValue = new DateOnly(monthStart.Year, monthStart.Month, 1);
+
             var settlement = new AwardSettlement
             {
                 TeamRepresentative = rep,
                 Member = member,
-                MonthStart = monthStart,
+                MonthStart = monthStartValue,
                 SettlementDoc = Get("Settlement Doc"),
                 No = noValue,
                 JoinedDate = joinedDate,
@@ -436,7 +446,42 @@ public class ExcelService : IExcelService
         }
 
         _awardSettlementRepository.AddRange(toInsertSettlements);
-        batch.Status = "Committed";
+        batch.Status = ExcelProcessEnum.Approved.ToString();
+
+
+        // process add payment records for each TR + Month
+        var monthGroups = toInsertSettlements.GroupBy(s => (s.TeamRepresentativeId, s.MonthStart));
+        foreach (var g in monthGroups)
+        {
+            var existingPayment = await _unitOfWork.PaymentTeamRepresentative
+                .FirstOrDefaultAsync(p => p.TeamRepresentativeId == g.Key.TeamRepresentativeId && p.MonthStart == g.Key.MonthStart);
+            if (existingPayment == null)
+            {
+                var payment = new PaymentTeamRepresentative
+                {
+                    TeamRepresentativeId = g.Key.TeamRepresentativeId,
+                    MonthStart = g.Key.MonthStart,
+                    SettlementDoc = g.FirstOrDefault()?.SettlementDoc ?? string.Empty,
+                    CasinoWinLossTotal = g.Sum(s => s.CasinoWinLoss),
+                    AwardTotal = CalculateHelper.CalculateAwardTotal(g.Sum(s => s.AwardSettlementAmount)),
+                    Status = PaymentProcessEnum.Pending.ToString(),
+                    IsPrintf = false,
+                    CreatedAt = DateTime.UtcNow,
+                    CreatedBy = string.Empty,
+                    UpdatedAt = DateTime.UtcNow,
+                    UpdatedBy = string.Empty,
+                };
+                await _unitOfWork.PaymentTeamRepresentative.AddAsync(payment);
+            }
+            else
+            {
+                // Update existing payment total
+                existingPayment.AwardTotal = CalculateHelper.CalculateAwardTotal(g.Sum(s => s.AwardSettlementAmount));
+                existingPayment.UpdatedAt = DateTime.UtcNow;
+                existingPayment.UpdatedBy = string.Empty;
+                _unitOfWork.PaymentTeamRepresentative.Update(existingPayment);
+            }
+        }
         await _unitOfWork.CompleteAsync();
 
         return new ApprovedImportResponse
@@ -505,6 +550,191 @@ public class ExcelService : IExcelService
         using var ms = new MemoryStream();
         wb.SaveAs(ms);
         var fileName = Path.GetFileNameWithoutExtension(batch.FileName) + "_annotated.xlsx";
+        return (ms.ToArray(), fileName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    }
+
+    public async Task<(byte[] Content, string FileName, string ContentType)> GenerateSettlementPaymentReportAsync(GenerateCrpReportRequest generateCrpReport)
+    {
+        if (generateCrpReport == null) throw new ArgumentNullException(nameof(generateCrpReport));
+        if (string.IsNullOrWhiteSpace(generateCrpReport.TeamRepresentativeId))
+            throw new ArgumentException("TeamRepresentativeId is required.", nameof(generateCrpReport.TeamRepresentativeId));
+
+        var monthStart = new DateOnly(generateCrpReport.Month.Year, generateCrpReport.Month.Month, 1);
+
+        var allReps = await _teamRepresentativeRepository.GetAllAsync();
+        var rep = allReps.FirstOrDefault(r =>
+                string.Equals(r.TeamRepresentativeId, generateCrpReport.TeamRepresentativeId, StringComparison.OrdinalIgnoreCase))
+            ?? (Guid.TryParse(generateCrpReport.TeamRepresentativeId, out var repGuid)
+                ? allReps.FirstOrDefault(r => r.Id == repGuid)
+                : null);
+
+        if (rep is null)
+            throw new InvalidOperationException($"TeamRepresentative '{generateCrpReport.TeamRepresentativeId}' not found.");
+
+        var settlements = await _awardSettlementRepository.FindAsync(
+            s => s.TeamRepresentativeId == rep.Id && s.MonthStart == monthStart,
+            s => s.Member!,
+            s => s.TeamRepresentative!
+        );
+
+        var payments = await _unitOfWork.PaymentTeamRepresentative.GetAllNoTrackingAsync();
+        var payment = payments.FirstOrDefault(p => p.TeamRepresentativeId == rep.Id && p.MonthStart == monthStart);
+        if (payment == null) throw new ArgumentNullException(nameof(generateCrpReport));
+
+        // Update isPrint
+        payment.IsPrintf = true;
+        _unitOfWork.PaymentTeamRepresentative.Update(payment);
+        await _unitOfWork.CompleteAsync();
+        var awardTotal = payment?.AwardTotal ?? settlements.Sum(s => s.AwardSettlementAmount);
+
+        var templatePath = Path.Combine(_hostingEnvironment.ContentRootPath, "Resources", "CRP Settlement Sample.xlsx");
+        if (!File.Exists(templatePath))
+            throw new FileNotFoundException("Template not found. Ensure it’s copied to output: Resources/CRP Settlement Sample.xlsx", templatePath);
+
+        using var wb = new XLWorkbook(templatePath);
+        var ws = wb.Worksheets.FirstOrDefault() ?? throw new InvalidOperationException("Template has no worksheets.");
+
+        ws.Cell("C4").Value = settlements.FirstOrDefault()?.SettlementDoc;
+        ws.Cell("E6").Value = rep.TeamRepresentativeName;
+        ws.Cell("E7").Value = rep.TeamRepresentativeId;
+        ws.Cell("E9").Value = monthStart.ToDateTime(TimeOnly.MinValue);
+
+        var neededHeaders = new[]
+        {
+            "No.", "Member ID", "Member name", "Joined date", "Last gaming date", "Eligible (Y/N)", "Casino win/(loss)"
+        };
+
+        int headerRow = 1;
+        Dictionary<string, int> headerCols = new(StringComparer.OrdinalIgnoreCase);
+
+        for (int r = 1; r <= 30; r++)
+        {
+            var cols = ws.Row(r).CellsUsed().ToDictionary(
+                c => c.Address.ColumnNumber,
+                c => (c.GetString() ?? string.Empty).Trim()
+            );
+
+            if (cols.Values.Any(v => v.Equals("Member ID", StringComparison.OrdinalIgnoreCase)) &&
+                cols.Values.Any(v => v.Equals("Member name", StringComparison.OrdinalIgnoreCase)))
+            {
+                headerRow = r;
+                headerCols = cols
+                    .GroupBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First().Key, StringComparer.OrdinalIgnoreCase);
+                break;
+            }
+        }
+
+        foreach (var h in neededHeaders)
+        {
+            if (!headerCols.ContainsKey(h))
+                throw new InvalidOperationException($"Template is missing required header: '{h}'.");
+        }
+
+        void TrySet(string headerText, string value)
+        {
+            var cell = ws.CellsUsed(c => string.Equals(c.GetString().Trim(), headerText, StringComparison.OrdinalIgnoreCase)).FirstOrDefault();
+            if (cell != null) cell.CellRight().Value = value;
+        }
+
+        TrySet("Team Representative", $"{rep.TeamRepresentativeName} ({rep.TeamRepresentativeId})");
+        TrySet("Month", $"{monthStart:yyyy-MM}");
+
+        var firstDataRow = headerRow + 1;
+        var lastUsedRow = ws.LastRowUsed()?.RowNumber() ?? firstDataRow - 1;
+        if (lastUsedRow >= firstDataRow)
+            ws.Rows(firstDataRow, lastUsedRow).Clear(XLClearOptions.Contents);
+
+        int idx(string header) => headerCols[header];
+
+        var row = firstDataRow;
+        foreach (var (s, no) in settlements.Select((s, i) => (s, i + 1)))
+        {
+            ws.Cell(row, idx("No.")).Value = no;
+            ws.Cell(row, idx("Member ID")).Value = s.Member?.MemberCode ?? string.Empty;
+            ws.Cell(row, idx("Member name")).Value = s.Member?.FullName ?? string.Empty;
+
+            ws.Cell(row, idx("Joined date")).Value = s.JoinedDate.ToDateTime(TimeOnly.MinValue);
+            ws.Cell(row, idx("Joined date")).Style.DateFormat.Format = "dd/MM/yyyy";
+
+            ws.Cell(row, idx("Last gaming date")).Value = s.LastGamingDate.ToDateTime(TimeOnly.MinValue);
+            ws.Cell(row, idx("Last gaming date")).Style.DateFormat.Format = "dd/MM/yyyy";
+
+            ws.Cell(row, idx("Eligible (Y/N)")).Value = s.Eligible ? "Y" : "N";
+
+            ws.Cell(row, idx("Casino win/(loss)")).Value = (double)s.CasinoWinLoss;
+            ws.Cell(row, idx("Casino win/(loss)")).Style.NumberFormat.Format = "#,##0.00;(#,##0.00)";
+
+            row++;
+        }
+
+        var labelCol = headerCols.ContainsKey("Eligible (Y/N)") ? idx("Eligible (Y/N)") : idx("Last gaming date");
+        var numberCol = idx("Casino win/(loss)");
+        var totalWinLoss = settlements.Sum(s => s.CasinoWinLoss);
+
+        int totalRow = row;
+        ws.Cell(row, labelCol).Value = "Total:";
+        ws.Cell(row, labelCol).Style.Font.Bold = true;
+
+        ws.Cell(row, numberCol).Value = (double)totalWinLoss;
+        ws.Cell(row, numberCol).Style.NumberFormat.Format = "#,##0.00;(#,##0.00)";
+        ws.Cell(row, numberCol).Style.Font.Bold = true;
+
+        ws.Row(row).Style.Border.TopBorder = XLBorderStyleValues.Thin;
+
+        row++;
+
+        int awardRow = row;
+        ws.Cell(row, labelCol).Value = "Award settlement:";
+        ws.Cell(row, labelCol).Style.Font.Bold = true;
+
+        ws.Cell(row, numberCol).Value = (double)awardTotal;
+        ws.Cell(row, numberCol).Style.NumberFormat.Format = "#,##0.00;(#,##0.00)";
+        ws.Cell(row, numberCol).Style.Font.Bold = true;
+
+        // Draw full border (header + data + summary)
+        var minCol = neededHeaders.Min(h => idx(h));
+        var maxCol = neededHeaders.Max(h => idx(h));
+        var tableRange = ws.Range(headerRow, minCol, awardRow, maxCol);
+        tableRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        tableRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+
+        // Leave 4 blank rows then signature headers
+        int signatureHeaderRow = awardRow + 5; // 4 blank rows after award row
+        int signatureValueRow = signatureHeaderRow + 5; // 4 blank rows for signing before values
+        var labelColSign = headerCols.ContainsKey("Member ID") ? idx("Member ID") : idx("Member name");
+        // Choose three columns for signatures (left, middle, right)
+        int paidCol = labelColSign;
+        int confirmCol = (minCol + maxCol) / 2;
+        int receivedCol = maxCol;
+
+        ws.Cell(signatureHeaderRow, paidCol).Value = "Paid by";
+        ws.Cell(signatureHeaderRow, confirmCol).Value = "Confirmed by";
+        ws.Cell(signatureHeaderRow, receivedCol).Value = "Received by";
+
+        ws.Range(signatureHeaderRow, paidCol, signatureHeaderRow, receivedCol).Style
+            .Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
+
+        // Values after 4 more rows
+        ws.Cell(signatureValueRow, paidCol).Value = "Cage";
+        ws.Cell(signatureValueRow, confirmCol).Value = "Casino Marketting";
+        ws.Cell(signatureValueRow, receivedCol).Value = "0";
+
+        ws.Range(signatureValueRow, paidCol, signatureValueRow, receivedCol).Style
+            .Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center)
+            .Font.SetBold();
+
+        // Optional signature line (bottom border) above the values
+        ws.Cell(signatureValueRow - 1, paidCol).Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+        ws.Cell(signatureValueRow - 1, confirmCol).Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+        ws.Cell(signatureValueRow - 1, receivedCol).Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+
+        ws.Columns().AdjustToContents();
+
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+
+        var fileName = $"CRP_Settlement_{rep.TeamRepresentativeId}_{monthStart:yyyyMM}.xlsx";
         return (ms.ToArray(), fileName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     }
 

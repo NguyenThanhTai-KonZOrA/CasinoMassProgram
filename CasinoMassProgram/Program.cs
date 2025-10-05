@@ -1,3 +1,4 @@
+using Common.CurrentUserLogin;
 using Common.SystemConfiguration;
 using Implement.ApplicationDbContext;
 using Implement.Repositories;
@@ -12,7 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddCors(opts =>
 {
     opts.AddPolicy("AllowSpa", p => p
-        .WithOrigins("http://localhost:5173", "http://localhost:5174", "http://localhost:3000")
+        .WithOrigins("http://localhost:5173", "http://localhost:5175", "http://localhost:3000")
         .AllowAnyHeader()
         .AllowAnyMethod());
 });
@@ -22,9 +23,10 @@ builder.Services.AddDbContext<CasinoMassProgramDbContext>(options =>
         options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 #region Add Services
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<ISystemConfiguration, SystemConfiguration>();
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
-
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 builder.Services.AddTransient<IExcelService, ExcelService>();
 builder.Services.AddTransient<IAwardSettlementRepository, AwardSettlementRepository>();
 builder.Services.AddTransient<ITeamRepresentativeMemberRepository, TeamRepresentativeMemberRepository>();
@@ -33,6 +35,7 @@ builder.Services.AddTransient<IMemberRepository, MemberRepository>();
 builder.Services.AddTransient<IImportBatchRepository, ImportBatchRepository>();
 builder.Services.AddTransient<IImportCellErrorRepository, ImportCellErrorRepository>();
 builder.Services.AddTransient<IImportRowRepository, ImportRowRepository>();
+builder.Services.AddTransient<IPaymentTeamRepresentativeRepository, PaymentTeamRepresentativeRepository>();
 builder.Services.AddTransient<ISettlementStatementService, SettlementStatementService>();
 #endregion
 // MVC + JSON
@@ -46,18 +49,31 @@ var app = builder.Build();
 app.UseCors("AllowSpa");
 
 // Apply migrations / create DB at startup
-using (var scope = app.Services.CreateScope())
+if (app.Environment.IsDevelopment())
 {
-    var db = scope.ServiceProvider.GetRequiredService<CasinoMassProgramDbContext>();
-    db.Database.Migrate();
+    using (var scope = app.Services.CreateScope())
+    {
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        try
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CasinoMassProgramDbContext>();
+            db.Database.Migrate();
+        }
+        catch (Exception ex)
+        {
+            logger.LogCritical(ex, "Database migration failed at startup");
+            // Optionally rethrow in non-prod:
+            // throw;
+        }
+    }
 }
 app.UseMiddleware<ApiMiddleware>();
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+//if (app.Environment.IsDevelopment())
+//{
+app.UseSwagger();
+app.UseSwaggerUI();
+//}
 
 app.UseHttpsRedirection();
 
