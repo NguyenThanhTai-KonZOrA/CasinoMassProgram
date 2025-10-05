@@ -13,5 +13,8 @@
         public decimal CasinoWinLoss { get; set; }
         public string Status { get; set; } = string.Empty; // Inprocess | Void | Falied | 
         public bool IsPayment { get; set; }
+        public bool IsPrintf { get; set; }
+        public string PaymentBy { get; set; }
+        public DateTime PaymentDate { get; set; }
     }
 }

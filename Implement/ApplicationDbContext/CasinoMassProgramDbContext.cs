@@ -14,8 +14,7 @@ public class CasinoMassProgramDbContext : DbContext
     public DbSet<AwardSettlement> AwardSettlements { get; set; }
     public DbSet<TeamRepresentative> TeamRepresentatives { get; set; }
     public DbSet<TeamRepresentativeMember> TeamRepresentativeMembers { get; set; }
-    public DbSet<PaymentTeamRepresentative> PaymentTeamRepresentatives { get; set; } // NEW
-
+    public DbSet<PaymentTeamRepresentative> PaymentTeamRepresentatives { get; set; }
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // Import tracking

@@ -1,5 +1,6 @@
 ﻿using ClosedXML.Excel;
 using Common.Enums;
+using Common.Helper;
 using Implement.EntityModels;
 using Implement.Repositories.Interface;
 using Implement.Services.Interface;
@@ -446,6 +447,41 @@ public class ExcelService : IExcelService
 
         _awardSettlementRepository.AddRange(toInsertSettlements);
         batch.Status = ExcelProcessEnum.Approved.ToString();
+
+
+        // process add payment records for each TR + Month
+        var monthGroups = toInsertSettlements.GroupBy(s => (s.TeamRepresentativeId, s.MonthStart));
+        foreach (var g in monthGroups)
+        {
+            var existingPayment = await _unitOfWork.PaymentTeamRepresentative
+                .FirstOrDefaultAsync(p => p.TeamRepresentativeId == g.Key.TeamRepresentativeId && p.MonthStart == g.Key.MonthStart);
+            if (existingPayment == null)
+            {
+                var payment = new PaymentTeamRepresentative
+                {
+                    TeamRepresentativeId = g.Key.TeamRepresentativeId,
+                    MonthStart = g.Key.MonthStart,
+                    SettlementDoc = g.FirstOrDefault()?.SettlementDoc ?? string.Empty,
+                    CasinoWinLossTotal = g.Sum(s => s.CasinoWinLoss),
+                    AwardTotal = CalculateHelper.CalculateAwardTotal(g.Sum(s => s.AwardSettlementAmount)),
+                    Status = PaymentProcessEnum.Pending.ToString(),
+                    IsPrintf = false,
+                    CreatedAt = DateTime.UtcNow,
+                    CreatedBy = string.Empty,
+                    UpdatedAt = DateTime.UtcNow,
+                    UpdatedBy = string.Empty,
+                };
+                await _unitOfWork.PaymentTeamRepresentative.AddAsync(payment);
+            }
+            else
+            {
+                // Update existing payment total
+                existingPayment.AwardTotal = CalculateHelper.CalculateAwardTotal(g.Sum(s => s.AwardSettlementAmount));
+                existingPayment.UpdatedAt = DateTime.UtcNow;
+                existingPayment.UpdatedBy = string.Empty;
+                _unitOfWork.PaymentTeamRepresentative.Update(existingPayment);
+            }
+        }
         await _unitOfWork.CompleteAsync();
 
         return new ApprovedImportResponse
@@ -543,6 +579,12 @@ public class ExcelService : IExcelService
 
         var payments = await _unitOfWork.PaymentTeamRepresentative.GetAllNoTrackingAsync();
         var payment = payments.FirstOrDefault(p => p.TeamRepresentativeId == rep.Id && p.MonthStart == monthStart);
+        if (payment == null) throw new ArgumentNullException(nameof(generateCrpReport));
+
+        // Update isPrint
+        payment.IsPrintf = true;
+        _unitOfWork.PaymentTeamRepresentative.Update(payment);
+        await _unitOfWork.CompleteAsync();
         var awardTotal = payment?.AwardTotal ?? settlements.Sum(s => s.AwardSettlementAmount);
 
         var templatePath = Path.Combine(_hostingEnvironment.ContentRootPath, "Resources", "CRP Settlement Sample.xlsx");

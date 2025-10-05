@@ -141,9 +141,12 @@ namespace Implement.Migrations
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     TeamRepresentativeId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    SettlementDoc = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     MonthStart = table.Column<DateOnly>(type: "date", nullable: false),
+                    CasinoWinLossTotal = table.Column<decimal>(type: "decimal(18,2)", nullable: false),
                     AwardTotal = table.Column<decimal>(type: "decimal(18,2)", nullable: false),
-                    Status = table.Column<string>(type: "nvarchar(50)", maxLength: 50, nullable: false),
+                    Status = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    IsPrintf = table.Column<bool>(type: "bit", nullable: false),
                     IsActive = table.Column<bool>(type: "bit", nullable: false),
                     IsDelete = table.Column<bool>(type: "bit", nullable: false),
                     CreatedBy = table.Column<string>(type: "nvarchar(max)", nullable: false),

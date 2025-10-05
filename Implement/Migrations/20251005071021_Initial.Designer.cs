@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Implement.Migrations
 {
     [DbContext(typeof(CasinoMassProgramDbContext))]
-    [Migration("20251004154127_Initial")]
+    [Migration("20251005071021_Initial")]
     partial class Initial
     {
         /// <inheritdoc />
@@ -262,6 +262,9 @@ namespace Implement.Migrations
                     b.Property<decimal>("AwardTotal")
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<decimal>("CasinoWinLossTotal")
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
@@ -275,13 +278,19 @@ namespace Implement.Migrations
                     b.Property<bool>("IsDelete")
                         .HasColumnType("bit");
 
+                    b.Property<bool>("IsPrintf")
+                        .HasColumnType("bit");
+
                     b.Property<DateOnly>("MonthStart")
                         .HasColumnType("date");
 
+                    b.Property<string>("SettlementDoc")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("Status")
                         .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<Guid>("TeamRepresentativeId")
                         .HasColumnType("uniqueidentifier");

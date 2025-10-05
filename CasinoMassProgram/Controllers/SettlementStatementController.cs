@@ -36,7 +36,7 @@ namespace CasinoMassProgram.Controllers
         {
             try
             {
-                var response = await _statementService.GetTeamRepresentatives(request);
+                var response = await _statementService.GetTeamRepresentativesV2(request);
                 return Ok(response);
             }
             catch (Exception ex)
@@ -50,7 +50,7 @@ namespace CasinoMassProgram.Controllers
         {
             try
             {
-                var response = await _statementService.PaymentTeamRepresentatives(paymentTeam, _currentUser.UserName);
+                var response = await _statementService.PaymentTeamRepresentativesV2(paymentTeam, _currentUser.UserName);
                 return Ok(response);
             }
             catch (Exception ex)

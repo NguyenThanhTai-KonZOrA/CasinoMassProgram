@@ -8,18 +8,16 @@ namespace Implement.EntityModels
     {
         [Key]
         public Guid Id { get; set; }
-
         public Guid TeamRepresentativeId { get; set; }
         public TeamRepresentative? TeamRepresentative { get; set; }
-
+        public string SettlementDoc { get; set; }
         public DateOnly MonthStart { get; set; }
-
+        [Column(TypeName = "decimal(18,2)")]
+        public decimal CasinoWinLossTotal { get; set; }
         [Column(TypeName = "decimal(18,2)")]
         public decimal AwardTotal { get; set; }
-
-        [MaxLength(50)]
         public string Status { get; set; }
-
+        public bool IsPrintf { get; set; } = true;
         public bool IsActive { get; set; } = true;
         public bool IsDelete { get; set; } = false;
         public string CreatedBy { get; set; } = CommonContants.SystemUser;

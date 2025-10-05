@@ -1,5 +1,6 @@
 ﻿using Common.Constants;
 using Common.Enums;
+using DocumentFormat.OpenXml.Wordprocessing;
 using Implement.ApplicationDbContext;
 using Implement.EntityModels;
 using Implement.Repositories.Interface;
@@ -88,16 +89,16 @@ namespace Implement.Services
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
 
-            var query = _dbContext.AwardSettlements
+            var query = _dbContext.AwardSettlements.Where(x => x.IsActive)
                 .AsNoTracking()
                 .AsQueryable();
 
-            if (request.Month.HasValue)
-            {
-                var m = request.Month.Value;
-                var monthStart = new DateOnly(m.Year, m.Month, 1);
-                query = query.Where(s => s.MonthStart == monthStart);
-            }
+            //if (request.Month.HasValue)
+            //{
+            //    var m = request.Month.Value;
+            //    var monthStart = new DateOnly(m.Year, m.Month, 1);
+            //    //query = query.Where(s => s.MonthStart == monthStart);
+            //}
 
             if (!string.IsNullOrWhiteSpace(request.TeamRepresentativeId))
             {
@@ -137,14 +138,14 @@ namespace Implement.Services
                     SettlementDoc = g.Max(x => x.SettlementDoc),
                     PaymentTeamRepresentatives = _dbContext.PaymentTeamRepresentatives
                         .Where(p =>
-                            p.MonthStart == g.Key.MonthStart &&
+                            p.MonthStart == g.Key.MonthStart && //p.Status == request.Status &&
                             p.TeamRepresentativeId ==
                                 _dbContext.TeamRepresentatives
                                     .Where(tr => tr.TeamRepresentativeId == g.Key.TeamRepresentativeId)
                                     .Select(tr => tr.Id)
                                     .FirstOrDefault()
                         )
-                        .Select(p => new { p.Status, p.Id })
+                        .Select(p => new { p.Status, p.Id, p.IsPrintf, p.CreatedBy, p.CreatedAt })
                         .FirstOrDefault()
                 })
                 .OrderByDescending(x => x.MonthStart)
@@ -163,12 +164,72 @@ namespace Implement.Services
                 AwardTotal = x.AwardTotal,
                 Status = x.PaymentTeamRepresentatives?.Status ?? string.Empty,
                 PaymentTeamRepresentativesId = x.PaymentTeamRepresentatives != null ? x.PaymentTeamRepresentatives.Id : Guid.Empty,
-                IsPayment = string.Equals(x.PaymentTeamRepresentatives?.Status, PaymentProcessEnum.Paid.ToString(), StringComparison.OrdinalIgnoreCase)
+                IsPayment = string.Equals(x.PaymentTeamRepresentatives?.Status, PaymentProcessEnum.Paid.ToString(), StringComparison.OrdinalIgnoreCase),
+                IsPrintf = x.PaymentTeamRepresentatives != null ? x.PaymentTeamRepresentatives.IsPrintf : false,
+                PaymentBy = x.PaymentTeamRepresentatives?.CreatedBy ?? string.Empty,
+                PaymentDate = x.PaymentTeamRepresentatives != null ? x.PaymentTeamRepresentatives.CreatedAt : DateTime.MinValue
             }).ToList();
 
             return result;
         }
 
+        public async Task<List<TeamRepresentativesResponse>> GetTeamRepresentativesV2(TeamRepresentativesRequest request)
+        {
+            if (request == null) throw new ArgumentNullException(nameof(request));
+            var query = _dbContext.PaymentTeamRepresentatives.Where(x => x.IsActive)
+                .AsNoTracking()
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(request.TeamRepresentativeId))
+            {
+                var trId = request.TeamRepresentativeId.Trim();
+                query = query.Where(s => s.TeamRepresentative != null && s.TeamRepresentative.TeamRepresentativeId == trId);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.TeamRepresentativeName))
+            {
+                var trName = request.TeamRepresentativeName.Trim();
+                query = query.Where(s => s.TeamRepresentative != null && s.TeamRepresentative.TeamRepresentativeName == trName);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.ProgramName))
+            {
+                var program = request.ProgramName.Trim();
+                query = query.Where(s => s.TeamRepresentative != null && s.TeamRepresentative.Segment == program);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.Status))
+            {
+                var status = request.Status.Trim();
+                query = query.Where(s => s.Status == status);
+            }
+
+            var payments = await query
+                .Include(p => p.TeamRepresentative)
+                .OrderByDescending(x => x.MonthStart)
+                .ThenBy(x => x.TeamRepresentative!.TeamRepresentativeName)
+                .ToListAsync();
+
+            var result = payments.Select(x => new TeamRepresentativesResponse
+            {
+                Segment = x.TeamRepresentative?.Segment,
+                CasinoWinLoss = x.CasinoWinLossTotal,
+                SettlementDoc = x.SettlementDoc,
+                TeamRepresentativeName = x.TeamRepresentative?.TeamRepresentativeName ?? string.Empty,
+                TeamRepresentativeId = x.TeamRepresentative?.TeamRepresentativeId ?? string.Empty,
+                Month = x.MonthStart.ToDateTime(TimeOnly.MinValue),
+                AwardTotal = x.AwardTotal,
+                Status = x.Status,
+                PaymentTeamRepresentativesId = x.Id,
+                IsPayment = string.Equals(x.Status, PaymentProcessEnum.Paid.ToString(), StringComparison.OrdinalIgnoreCase),
+                IsPrintf = x.IsPrintf,
+                PaymentBy = x.UpdatedBy ?? string.Empty,
+                PaymentDate = x.UpdatedAt
+            }).ToList();
+
+            return result;
+
+        }
         public async Task<PaymentTeamRepresentativesResponse> PaymentTeamRepresentatives(PaymentTeamRepresentativesRequest paymentTeam, string userName)
         {
             if (paymentTeam == null) throw new ArgumentNullException(nameof(paymentTeam));
@@ -231,6 +292,7 @@ namespace Implement.Services
                     CreatedAt = DateTime.UtcNow,
                     CreatedBy = userName ?? CommonContants.SystemUser,
                     UpdatedBy = userName ?? CommonContants.SystemUser,
+                    IsPrintf = false
                 };
                 await _unitOfWork.PaymentTeamRepresentative.AddAsync(payment);
             }
@@ -263,6 +325,50 @@ namespace Implement.Services
             }
         }
 
+        public async Task<PaymentTeamRepresentativesResponse> PaymentTeamRepresentativesV2(PaymentTeamRepresentativesRequest paymentTeam, string currentUserName)
+        {
+            var payment = await _paymentTeamRepresentativeRepository
+                                .FirstOrDefaultAsync(p => p.Id == paymentTeam.PaymentTeamRepresentativesId &&
+                                (p.Status == PaymentProcessEnum.Pending.ToString() ||
+                                 p.Status == PaymentProcessEnum.Voided.ToString()));
+
+            if (payment == null) return new PaymentTeamRepresentativesResponse { IsPayment = false };
+
+            payment.Status = PaymentProcessEnum.Inprocess.ToString();
+            payment.UpdatedBy = currentUserName ?? CommonContants.SystemUser;
+            _unitOfWork.PaymentTeamRepresentative.Update(payment);
+            await _unitOfWork.CompleteAsync();
+
+            try
+            {
+                payment.Status = PaymentProcessEnum.Paid.ToString();
+                payment.UpdatedAt = DateTime.UtcNow;
+                payment.UpdatedBy = currentUserName ?? CommonContants.SystemUser;
+                _unitOfWork.PaymentTeamRepresentative.Update(payment);
+                await _unitOfWork.CompleteAsync();
+
+                return new PaymentTeamRepresentativesResponse
+                {
+                    IsPayment = true,
+                    PaymentTeamRepresentativesId = payment.Id
+                };
+            }
+            catch
+            {
+                payment.Status = PaymentProcessEnum.Falied.ToString();
+                payment.UpdatedAt = DateTime.UtcNow;
+                payment.UpdatedBy = currentUserName ?? CommonContants.SystemUser;
+                _unitOfWork.PaymentTeamRepresentative.Update(payment);
+                await _unitOfWork.CompleteAsync();
+
+                return new PaymentTeamRepresentativesResponse
+                {
+                    IsPayment = false,
+                    PaymentTeamRepresentativesId = payment.Id
+                };
+            }
+        }
+
         public async Task<UnPaidTeamRepresentativesResponse> UnPaidTeamRepresentatives(UnPaidTeamRepresentativesRequest unPaidTeam, string currentUserName)
         {
             var payment = await _paymentTeamRepresentativeRepository.FirstOrDefaultAsync(p => p.Id == unPaidTeam.PaymentTeamRepresentativesId && p.Status == PaymentProcessEnum.Paid.ToString());
@@ -272,16 +378,32 @@ namespace Implement.Services
                 return new UnPaidTeamRepresentativesResponse { IsUnPaid = false };
             }
 
-            payment.Status = PaymentProcessEnum.Voided.ToString();
-            payment.UpdatedAt = DateTime.UtcNow;
+            payment.Status = PaymentProcessEnum.Inprocess.ToString();
             payment.UpdatedBy = currentUserName ?? CommonContants.SystemUser;
             _unitOfWork.PaymentTeamRepresentative.Update(payment);
             await _unitOfWork.CompleteAsync();
 
-            return new UnPaidTeamRepresentativesResponse { IsUnPaid = true };
+            try
+            {
+                payment.Status = PaymentProcessEnum.Voided.ToString();
+                payment.UpdatedAt = DateTime.UtcNow;
+                payment.UpdatedBy = currentUserName ?? CommonContants.SystemUser;
+                _unitOfWork.PaymentTeamRepresentative.Update(payment);
+                await _unitOfWork.CompleteAsync();
+
+                return new UnPaidTeamRepresentativesResponse { IsUnPaid = true };
+            }
+            catch
+            {
+                payment.Status = PaymentProcessEnum.Falied.ToString();
+                payment.UpdatedAt = DateTime.UtcNow;
+                payment.UpdatedBy = currentUserName ?? CommonContants.SystemUser;
+                _unitOfWork.PaymentTeamRepresentative.Update(payment);
+                await _unitOfWork.CompleteAsync();
+
+                return new UnPaidTeamRepresentativesResponse { IsUnPaid = true };
+            }
         }
-
-
         private decimal CalculateAwardTotal(decimal casinoWinLoss)
         {
             if (casinoWinLoss >= 90000m)
