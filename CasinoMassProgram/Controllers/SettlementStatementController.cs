@@ -1,6 +1,8 @@
-﻿using Common.CurrentUserLogin;
+﻿using Common.Constants;
+using Common.CurrentUserLogin;
 using Implement.Services.Interface;
 using Implement.ViewModels.Request;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CasinoMassProgram.Controllers
@@ -46,6 +48,7 @@ namespace CasinoMassProgram.Controllers
         }
 
         [HttpPost("payment")]
+        //[Authorize(Roles = CommonContants.AdminRole)]
         public async Task<IActionResult> PaymentTeamRepresentatives(PaymentTeamRepresentativesRequest paymentTeam)
         {
             try
@@ -60,6 +63,7 @@ namespace CasinoMassProgram.Controllers
         }
 
         [HttpPost("unPaid")]
+        //[Authorize(Roles = CommonContants.AdminRole)]
         public async Task<IActionResult> UnPaidTeamRepresentatives(UnPaidTeamRepresentativesRequest unPaidTeam)
         {
             try

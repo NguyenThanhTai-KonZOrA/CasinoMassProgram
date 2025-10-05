@@ -21,5 +21,9 @@ namespace Implement.Services
             IsAuthenticated
                 ? (Principal!.Identity!.Name ?? CommonContants.SystemUser)
                 : CommonContants.SystemUser;
+
+        public string? Role => throw new NotImplementedException();
+
+        public bool IsAdmin => throw new NotImplementedException();
     }
 }

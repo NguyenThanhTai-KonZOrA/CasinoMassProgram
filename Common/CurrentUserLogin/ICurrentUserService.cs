@@ -7,5 +7,7 @@ namespace Common.CurrentUserLogin
         string UserName { get; }
         bool IsAuthenticated { get; }
         ClaimsPrincipal? Principal { get; }
+        string? Role { get; }
+        bool IsAdmin { get; }
     }
 }

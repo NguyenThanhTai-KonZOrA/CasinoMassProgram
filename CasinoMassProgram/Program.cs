@@ -1,3 +1,4 @@
+using Common.Constants;
 using Common.CurrentUserLogin;
 using Common.SystemConfiguration;
 using Implement.ApplicationDbContext;
@@ -6,7 +7,11 @@ using Implement.Repositories.Interface;
 using Implement.Services;
 using Implement.Services.Interface;
 using Implement.UnitOfWork;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -38,6 +43,39 @@ builder.Services.AddTransient<IImportRowRepository, ImportRowRepository>();
 builder.Services.AddTransient<IPaymentTeamRepresentativeRepository, PaymentTeamRepresentativeRepository>();
 builder.Services.AddTransient<ISettlementStatementService, SettlementStatementService>();
 #endregion
+
+// JWT Auth
+var jwtSection = builder.Configuration.GetSection("Jwt");
+var jwtKey = jwtSection["Key"];
+var jwtIssuer = jwtSection["Issuer"];
+var jwtAudience = jwtSection["Audience"];
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(o =>
+    {
+        o.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = jwtIssuer,
+            ValidAudience = jwtAudience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            NameClaimType = ClaimTypes.Name,
+            RoleClaimType = ClaimTypes.Role
+        };
+    });
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AdminOnly", p => p.RequireRole(CommonContants.AdminRole));
+});
+
+
+
+
 // MVC + JSON
 builder.Services
     .AddControllers()
@@ -76,7 +114,7 @@ app.UseSwaggerUI();
 //}
 
 app.UseHttpsRedirection();
-
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
